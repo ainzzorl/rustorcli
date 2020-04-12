@@ -8,3 +8,6 @@ edition = "2018"
 
 [dependencies]
 clap = "2.33.0"
+daemonize = "0.4.1"
+nix = "0.17.0"
+sysinfo = "0.13.1"
