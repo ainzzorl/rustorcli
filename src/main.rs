@@ -155,7 +155,6 @@ fn read_pid() -> Option<i32> {
     let content_opt = fs::read_to_string("/tmp/rustorcli.pid");
     match content_opt {
         Ok(content) => {
-            println!("Pid: {}", content);
             return Some(content.parse().unwrap());
         }
         Err(_) => {
