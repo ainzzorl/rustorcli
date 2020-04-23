@@ -1,14 +1,14 @@
 extern crate daemonize;
 extern crate sysinfo;
 
-mod torrent_entries;
+pub mod orchestration;
+pub mod torrent_entries;
 
 use clap::{App, Arg, SubCommand};
 use nix::sys::signal::Signal;
 use std::fs;
 use std::fs::File;
 use std::process;
-use std::{thread, time};
 use sysinfo::SystemExt;
 
 use daemonize::Daemonize;
@@ -121,10 +121,7 @@ fn start(pid_opt: Option<i32>) {
 }
 
 fn run() {
-    loop {
-        println!("Kinda running");
-        thread::sleep(time::Duration::from_secs(10));
-    }
+    orchestration::start();
 }
 
 fn stop(pid_opt: Option<i32>) {
