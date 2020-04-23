@@ -94,21 +94,23 @@ fn e2e() -> Result<(), Box<dyn std::error::Error>> {
         .spawn()
         .expect("Failed to add torrent B to transmission");
 
-    println!("Cleaning up rustorcli");
-    let config_directory = torrent_entries::config_directory();
-    std::fs::remove_dir_all(config_directory).unwrap();
-
     println!("Stopping rustorcli");
     Command::main_binary()?.arg("stop").assert().success();
 
+    println!("Cleaning up rustorcli");
+    let config_directory = torrent_entries::config_directory();
+    std::fs::remove_dir_all(config_directory).ok();
+
     println!("Starting rustorcli");
     Command::main_binary()?.arg("start").assert().success();
+
+    thread::sleep(time::Duration::from_secs(10));
 
     println!("Adding torrents to rustorcli");
     Command::main_binary()?
         .arg("add")
         .arg("-t")
-        .arg("./data/torrent_a_data.torrent")
+        .arg(get_absolute("./data/torrent_a_data.torrent"))
         .arg("-d")
         .arg(RUSTORCLI_DIRECTORY)
         .assert()
@@ -116,7 +118,7 @@ fn e2e() -> Result<(), Box<dyn std::error::Error>> {
     Command::main_binary()?
         .arg("add")
         .arg("-t")
-        .arg("./data/torrent_b_data.torrent")
+        .arg(get_absolute("./data/torrent_b_data.torrent"))
         .arg("-d")
         .arg(RUSTORCLI_DIRECTORY)
         .assert()
@@ -152,4 +154,10 @@ fn e2e() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     panic!("Never reached the desired state");
+}
+
+fn get_absolute(relative: &str) -> String {
+    let cur = std::env::current_dir().unwrap();
+    let cur_str = cur.to_str().unwrap();
+    return format!("{}/{}", cur_str, relative);
 }

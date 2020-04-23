@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate serde_derive;
+
 extern crate daemonize;
 extern crate sysinfo;
 

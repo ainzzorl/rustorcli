@@ -11,7 +11,7 @@ static TORRENT_ENTRIES_FILE: &str = "torrent-entries.json";
 // TODO: what if not on mac?
 static TORRENT_ENTRIES_DIR: &str = "Library/Application Support/rustorcli";
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TorrentEntry {
     pub id: u32,
     pub torrent_path: String,
