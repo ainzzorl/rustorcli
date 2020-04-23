@@ -104,8 +104,6 @@ fn e2e() -> Result<(), Box<dyn std::error::Error>> {
     println!("Starting rustorcli");
     Command::main_binary()?.arg("start").assert().success();
 
-    thread::sleep(time::Duration::from_secs(10));
-
     println!("Adding torrents to rustorcli");
     Command::main_binary()?
         .arg("add")

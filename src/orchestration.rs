@@ -31,6 +31,8 @@ use ring::digest;
 
 use serde_bencode::value::Value;
 
+use std::convert::TryInto;
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Download {
     entry: torrent_entries::TorrentEntry,
@@ -58,6 +60,15 @@ struct TorrentInfo {
     #[serde(rename = "piece length")]
     piece_length: i64,
     pieces: ByteBuf,
+
+    #[serde(default)]
+    piece_infos: Vec<PieceInfo>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+struct PieceInfo {
+    downloaded: bool,
+    sha: Vec<u8>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -110,7 +121,28 @@ fn read_torrent(path: &String) -> Torrent {
     let mut torrent = de::from_bytes::<Torrent>(&buffer).unwrap();
     torrent.info_hash = info_hash(&buffer).unwrap();
 
+    parse_pieces(&mut torrent);
+
     return torrent;
+}
+
+fn parse_pieces(torrent: &mut Torrent) {
+    println!("Parsing pieces...");
+    let mut piece_infos = Vec::new();
+
+    for piece_id in 0..(torrent.info.pieces.len() / 20) {
+        let from = piece_id * 20;
+        let to = (piece_id + 1) * 20;
+        let bts: [u8; 20] = torrent.info.pieces.as_ref()[from..to].try_into().unwrap();
+
+        piece_infos.push(PieceInfo {
+            downloaded: false,
+            sha: bts.to_vec(),
+        })
+    }
+    println!("Total pieces: {}", piece_infos.len());
+
+    torrent.info.piece_infos = piece_infos;
 }
 
 fn info_hash(data: &[u8]) -> Result<Vec<u8>, Error> {
