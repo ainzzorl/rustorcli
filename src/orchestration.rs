@@ -20,6 +20,7 @@ use rustorcli::torrent_entries;
 use std::fs;
 use std::fs::File;
 use std::io::Read;
+use std::io::Write;
 
 use serde_bencode::de;
 
@@ -240,7 +241,7 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String) {
             }
         }
 
-        open_missing_connections(downloads);
+        open_missing_connections(downloads, my_id);
 
         // TODO: do work!
 
@@ -249,7 +250,7 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String) {
     }
 }
 
-fn open_missing_connections(downloads: &mut HashMap<u32, Download>) {
+fn open_missing_connections(downloads: &mut HashMap<u32, Download>, my_id: &String) {
     println!("Opening missing connections");
     for (download_id, download) in downloads {
         for peer_index in 0..download.connections.len() {
@@ -269,6 +270,11 @@ fn open_missing_connections(downloads: &mut HashMap<u32, Download>) {
                 } else {
                     peer.ip.clone()
                 }; // TODO: remove this
+                if peer.port == 6881 {
+                    // Don't connect to self.
+                    // TODO: remove this
+                    continue;
+                }
                 let address = format!("{}:{}", ip, peer.port);
                 println!(
                     "Trying to open missing connection; download_id={}, peer_id={}, address={}",
@@ -277,7 +283,7 @@ fn open_missing_connections(downloads: &mut HashMap<u32, Download>) {
                 match TcpStream::connect(address) {
                     Ok(mut stream) => {
                         println!("Connected to the peer!");
-                        //handshake(&mut stream, info_hash, peer_id);
+                        handshake(&mut stream, &download.torrent.info_hash, my_id);
                         download.connections[peer_index] = Some(stream);
                     }
                     Err(e) => {
@@ -329,4 +335,61 @@ fn get_announcement(torrent: &Torrent, peer_id: &String) -> Result<Announcement,
     println!("Num peers: {}", announcement.peers.len());
 
     return Ok(announcement);
+}
+
+fn handshake(stream: &mut TcpStream, info_hash: &Vec<u8>, my_id: &String) {
+    println!("Starting handshake...");
+    let mut to_write: Vec<u8> = Vec::new();
+    to_write.push(19 as u8);
+    to_write.extend("BitTorrent protocol".bytes());
+    to_write.extend(vec![0; 8].into_iter());
+
+    to_write.extend(info_hash.iter().cloned());
+    to_write.extend(my_id.bytes());
+
+    let warr: &[u8] = &to_write; // c: &[u8]
+    stream.write_all(warr).unwrap();
+
+    let pstrlen = read_n(stream, 1).unwrap();
+    read_n(stream, pstrlen[0] as u32).unwrap();
+
+    read_n(stream, 8).unwrap();
+    let in_info_hash = read_n(stream, 20).unwrap();
+    let in_peer_id = read_n(stream, 20).unwrap();
+
+    // validate info hash
+    if in_info_hash != *info_hash {
+        println!("Invalid info hash");
+    }
+
+    let peer_id_vec: Vec<u8> = my_id.bytes().collect();
+    if in_peer_id == peer_id_vec {
+        // TODO: do something about it!
+        println!("Invalid peer id");
+    }
+    println!("Completed handshake!");
+}
+
+fn read_n(stream: &mut TcpStream, bytes_to_read: u32) -> Result<Vec<u8>, Error> {
+    let mut buf = vec![];
+    read_n_to_buf(stream, &mut buf, bytes_to_read).unwrap();
+    Ok(buf)
+}
+
+fn read_n_to_buf(
+    stream: &mut TcpStream,
+    buf: &mut Vec<u8>,
+    bytes_to_read: u32,
+) -> Result<(), Error> {
+    if bytes_to_read == 0 {
+        return Ok(());
+    }
+
+    let bytes_read = stream.take(bytes_to_read as u64).read_to_end(buf);
+    match bytes_read {
+        Ok(0) => bail!("Read 0"),
+        Ok(n) if n == bytes_to_read as usize => Ok(()),
+        Ok(n) => read_n_to_buf(stream, buf, bytes_to_read - n as u32),
+        Err(e) => bail!(format!("{}", e)),
+    }
 }
