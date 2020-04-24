@@ -33,6 +33,8 @@ use serde_bencode::value::Value;
 
 use std::convert::TryInto;
 
+use std::collections::VecDeque;
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Download {
     entry: torrent_entries::TorrentEntry,
@@ -83,13 +85,31 @@ struct PeerInfo {
     port: u64,
 }
 
-fn reload_config(downloads: &mut HashMap<u32, Download>, my_id: &String) {
+struct QueueEntry {
+    download_id: u32,
+    piece_id: u32,
+}
+
+fn reload_config(
+    downloads: &mut HashMap<u32, Download>,
+    my_id: &String,
+    queue: &mut VecDeque<QueueEntry>,
+) {
     let entries = torrent_entries::list_torrents();
     println!("Reloading config. Entries: {}", entries.len());
     for entry in entries {
         if !downloads.contains_key(&entry.id) {
             println!("Adding entry, id={}", entry.id);
-            downloads.insert(entry.id, to_download(&entry, my_id));
+            let download = to_download(&entry, my_id);
+
+            for piece_id in 0..download.torrent.info.piece_infos.len() {
+                queue.push_back(QueueEntry {
+                    download_id: entry.id,
+                    piece_id: piece_id as u32,
+                });
+            }
+
+            downloads.insert(entry.id, download);
         }
     }
 
@@ -166,7 +186,6 @@ pub fn start() {
     println!("My id: {}", my_id);
 
     let mut downloads: HashMap<u32, Download> = HashMap::new();
-    reload_config(&mut downloads, &my_id);
     main_loop(&mut downloads, &my_id);
 }
 
@@ -179,21 +198,35 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String) {
         .watch(config_directory, RecursiveMode::Recursive)
         .unwrap();
 
+    let mut queue = VecDeque::new();
+
+    reload_config(downloads, &my_id, &mut queue);
+
     let mut iteration = 0;
     loop {
         println!("Main loop iteration");
+        println!("Entries in the queue: {}", queue.len());
 
+        match queue.pop_front() {
+            Some(c) => {
+                println!(
+                    "Next chunk: download_id={}, piece_id={}",
+                    c.download_id, c.piece_id
+                );
+            }
+            None => {}
+        }
         match rx.recv_timeout(time::Duration::from_millis(1000)) {
             Ok(event) => {
                 println!("{:?}", event);
-                reload_config(downloads, my_id);
+                reload_config(downloads, &my_id, &mut queue);
             }
             Err(e) => {
                 println!("watch error: {:?}", e);
                 // TODO: remove this
                 if iteration % 10 == 0 {
                     println!("Reloading on iteration {}", iteration);
-                    reload_config(downloads, my_id);
+                    reload_config(downloads, &my_id, &mut queue);
                 }
             }
         }
