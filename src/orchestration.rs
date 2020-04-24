@@ -35,11 +35,14 @@ use std::convert::TryInto;
 
 use std::collections::VecDeque;
 
-#[derive(Debug, Deserialize, Serialize)]
+use std::net::TcpStream;
+
+
 pub struct Download {
     entry: torrent_entries::TorrentEntry,
     torrent: Torrent,
     announcement: Announcement,
+    connections: Vec<Option<TcpStream>>
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -120,6 +123,12 @@ fn to_download(entry: &torrent_entries::TorrentEntry, my_id: &String) -> Downloa
     let torrent = read_torrent(&(entry.torrent_path));
     let announcement = get_announcement(&torrent, &my_id).unwrap();
 
+    let num_peers = announcement.peers.len();
+    let mut connections: Vec<Option<TcpStream>> = Vec::new();
+    for _ in 0..num_peers {
+        connections.push(None);
+    }
+
     Download {
         entry: torrent_entries::TorrentEntry::new(
             entry.id,
@@ -128,6 +137,7 @@ fn to_download(entry: &torrent_entries::TorrentEntry, my_id: &String) -> Downloa
         ),
         torrent: torrent,
         announcement: announcement,
+        connections: connections
     }
 }
 
