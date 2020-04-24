@@ -37,12 +37,11 @@ use std::collections::VecDeque;
 
 use std::net::TcpStream;
 
-
 pub struct Download {
     entry: torrent_entries::TorrentEntry,
     torrent: Torrent,
     announcement: Announcement,
-    connections: Vec<Option<TcpStream>>
+    connections: Vec<Option<TcpStream>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -137,7 +136,7 @@ fn to_download(entry: &torrent_entries::TorrentEntry, my_id: &String) -> Downloa
         ),
         torrent: torrent,
         announcement: announcement,
-        connections: connections
+        connections: connections,
     }
 }
 
@@ -241,10 +240,52 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String) {
             }
         }
 
+        open_missing_connections(downloads);
+
         // TODO: do work!
 
         thread::sleep(time::Duration::from_millis(1000));
         iteration += 1;
+    }
+}
+
+fn open_missing_connections(downloads: &mut HashMap<u32, Download>) {
+    println!("Opening missing connections");
+    for (download_id, download) in downloads {
+        for peer_index in 0..download.connections.len() {
+            if download
+                .connections
+                .get(peer_index)
+                .expect("expected connection to be in the vec")
+                .is_none()
+            {
+                let peer = download
+                    .announcement
+                    .peers
+                    .get(peer_index)
+                    .expect("Expected peer to be in the list");
+                let ip = if peer.ip == "::1" {
+                    String::from("127.0.0.1")
+                } else {
+                    peer.ip.clone()
+                }; // TODO: remove this
+                let address = format!("{}:{}", ip, peer.port);
+                println!(
+                    "Trying to open missing connection; download_id={}, peer_id={}, address={}",
+                    download_id, peer_index, address
+                );
+                match TcpStream::connect(address) {
+                    Ok(mut stream) => {
+                        println!("Connected to the peer!");
+                        //handshake(&mut stream, info_hash, peer_id);
+                        download.connections[peer_index] = Some(stream);
+                    }
+                    Err(e) => {
+                        println!("Could not connect to peer: {:?}", e);
+                    }
+                }
+            }
+        }
     }
 }
 
