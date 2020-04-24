@@ -17,12 +17,11 @@ use std::{thread, time};
 
 use rustorcli::torrent_entries;
 
+use serde_bencode::de;
 use std::fs;
 use std::fs::File;
-use std::io::Read;
 use std::io::Write;
-
-use serde_bencode::de;
+use std::io::{self, Read};
 
 use percent_encoding::percent_encode_byte;
 
@@ -37,6 +36,8 @@ use std::convert::TryInto;
 use std::collections::VecDeque;
 
 use std::net::TcpStream;
+
+use std::net::SocketAddr;
 
 pub struct Download {
     entry: torrent_entries::TorrentEntry,
@@ -242,6 +243,7 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String) {
         }
 
         open_missing_connections(downloads, my_id);
+        receive_messages(downloads);
 
         // TODO: do work!
 
@@ -280,15 +282,54 @@ fn open_missing_connections(downloads: &mut HashMap<u32, Download>, my_id: &Stri
                     "Trying to open missing connection; download_id={}, peer_id={}, address={}",
                     download_id, peer_index, address
                 );
-                match TcpStream::connect(address) {
+                let socket_address: SocketAddr =
+                    address.parse().expect("Unable to parse socket address");
+                match TcpStream::connect(&socket_address) {
                     Ok(mut stream) => {
                         println!("Connected to the peer!");
                         handshake(&mut stream, &download.torrent.info_hash, my_id);
+                        stream.set_nonblocking(true).unwrap();
                         download.connections[peer_index] = Some(stream);
                     }
                     Err(e) => {
                         println!("Could not connect to peer: {:?}", e);
                     }
+                }
+            }
+        }
+    }
+}
+
+fn receive_messages(downloads: &mut HashMap<u32, Download>) {
+    println!("Receiving messages connections");
+    for (_, download) in downloads {
+        for stream_opt in &download.connections {
+            match stream_opt {
+                Some(stream) => {
+                    println!("Getting message size...");
+                    match read_n(&stream, 4) {
+                        Ok(sizebytes) => {
+                            let message_size = bytes_to_u32(&sizebytes);
+                            println!("Message size: {}", message_size);
+                            if message_size == 0 {
+                                println!("Looks like keepalive");
+                            } else {
+                                println!("Reading message payload...");
+                                let message = read_n(&stream, message_size).unwrap();
+                                let resptype = message[0];
+                                println!("Response type: {}", resptype);
+                            }
+                        }
+                        Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                            println!("Would-block error");
+                        }
+                        Err(e) => {
+                            println!("Unexpected error: {:?}", e);
+                        }
+                    }
+                }
+                None => {
+                    // Connection is not open
                 }
             }
         }
@@ -370,26 +411,38 @@ fn handshake(stream: &mut TcpStream, info_hash: &Vec<u8>, my_id: &String) {
     println!("Completed handshake!");
 }
 
-fn read_n(stream: &mut TcpStream, bytes_to_read: u32) -> Result<Vec<u8>, Error> {
+fn read_n(stream: &TcpStream, bytes_to_read: u32) -> Result<Vec<u8>, std::io::Error> {
     let mut buf = vec![];
-    read_n_to_buf(stream, &mut buf, bytes_to_read).unwrap();
+    read_n_to_buf(stream, &mut buf, bytes_to_read)?;
     Ok(buf)
 }
 
 fn read_n_to_buf(
-    stream: &mut TcpStream,
+    stream: &TcpStream,
     buf: &mut Vec<u8>,
     bytes_to_read: u32,
-) -> Result<(), Error> {
+) -> Result<(), std::io::Error> {
     if bytes_to_read == 0 {
         return Ok(());
     }
 
     let bytes_read = stream.take(bytes_to_read as u64).read_to_end(buf);
     match bytes_read {
-        Ok(0) => bail!("Read 0"),
+        Ok(0) => panic!("Read 0"),
         Ok(n) if n == bytes_to_read as usize => Ok(()),
         Ok(n) => read_n_to_buf(stream, buf, bytes_to_read - n as u32),
-        Err(e) => bail!(format!("{}", e)),
+        Err(e) => return Err(std::io::Error::new(io::ErrorKind::WouldBlock, e)),
     }
+}
+
+const BYTE_0: u32 = 256 * 256 * 256;
+const BYTE_1: u32 = 256 * 256;
+const BYTE_2: u32 = 256;
+const BYTE_3: u32 = 1;
+
+fn bytes_to_u32(bytes: &[u8]) -> u32 {
+    bytes[0] as u32 * BYTE_0
+        + bytes[1] as u32 * BYTE_1
+        + bytes[2] as u32 * BYTE_2
+        + bytes[3] as u32 * BYTE_3
 }
