@@ -3,3 +3,6 @@ test :
 
 e2e :
 			 cargo test e2e -- --nocapture --ignored
+
+cleanup:
+			 cargo run stop
