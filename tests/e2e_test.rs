@@ -105,14 +105,15 @@ fn e2e() -> Result<(), Box<dyn std::error::Error>> {
     Command::main_binary()?.arg("start").assert().success();
 
     println!("Adding torrents to rustorcli");
-    Command::main_binary()?
-        .arg("add")
-        .arg("-t")
-        .arg(get_absolute("./data/torrent_a_data.torrent"))
-        .arg("-d")
-        .arg(RUSTORCLI_DIRECTORY)
-        .assert()
-        .success();
+    // TODO: add this once we can seed.
+    // Command::main_binary()?
+    //     .arg("add")
+    //     .arg("-t")
+    //     .arg(get_absolute("./data/torrent_a_data.torrent"))
+    //     .arg("-d")
+    //     .arg(RUSTORCLI_DIRECTORY)
+    //     .assert()
+    //     .success();
     Command::main_binary()?
         .arg("add")
         .arg("-t")

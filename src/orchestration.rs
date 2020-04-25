@@ -44,6 +44,8 @@ pub struct Download {
     torrent: Torrent,
     announcement: Announcement,
     connections: Vec<Option<TcpStream>>,
+    we_interested: Vec<bool>,
+    we_choked: Vec<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -126,8 +128,12 @@ fn to_download(entry: &torrent_entries::TorrentEntry, my_id: &String) -> Downloa
 
     let num_peers = announcement.peers.len();
     let mut connections: Vec<Option<TcpStream>> = Vec::new();
+    let mut we_interested: Vec<bool> = Vec::new();
+    let mut we_choked: Vec<bool> = Vec::new();
     for _ in 0..num_peers {
         connections.push(None);
+        we_interested.push(false);
+        we_choked.push(false);
     }
 
     Download {
@@ -139,6 +145,8 @@ fn to_download(entry: &torrent_entries::TorrentEntry, my_id: &String) -> Downloa
         torrent: torrent,
         announcement: announcement,
         connections: connections,
+        we_interested: we_interested,
+        we_choked: we_choked
     }
 }
 
@@ -269,7 +277,14 @@ fn try_download(downloads: &mut HashMap<u32, Download>, download_id: u32, piece_
             println!("Found peer, index={}", peer_id);
             let v: &mut Vec<Option<TcpStream>> = &mut download.connections;
             let mut o: Option<&mut TcpStream> = v[peer_id].as_mut();
-            let s: &mut TcpStream = o.as_mut().expect("hui");
+            let s: &mut TcpStream = o.as_mut().expect("Expected the stream to be present");
+
+            if !download.we_interested[peer_id] {
+                send_interested(s);
+                download.we_interested[peer_id] = true;
+            } else {
+                println!("We are already interested in the peer");
+            }
 
             request_piece(s, piece_id, download.torrent.info.piece_length);
             return Ok(());
@@ -279,6 +294,11 @@ fn try_download(downloads: &mut HashMap<u32, Download>, download_id: u32, piece_
             return Err(());
         }
     }
+}
+
+fn send_interested(stream: &mut TcpStream)  {
+    println!("Sending interested");
+    send_message(stream, 2, &Vec::new());
 }
 
 fn request_piece(stream: &mut TcpStream, piece_id: usize, piece_length: i64)  {
@@ -306,7 +326,6 @@ fn find_peer_for_piece(download: &Download, piece_id: usize) -> Option<usize> {
     for peer_index in 0..download.announcement.peers.len() {
         // TODO: check if has piece!
         // TODO: check if choked
-        // TODO: check if interested
         if download.connections[peer_index].is_some() {
             return Some(peer_index);
         }
