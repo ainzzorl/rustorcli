@@ -46,6 +46,7 @@ pub struct Download {
     connections: Vec<Option<TcpStream>>,
     we_interested: Vec<bool>,
     we_choked: Vec<bool>,
+    temp_location: String
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -65,6 +66,7 @@ struct TorrentFile {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 struct TorrentInfo {
     name: String,
+    length: i64,
     #[serde(rename = "piece length")]
     piece_length: i64,
     pieces: ByteBuf,
@@ -108,6 +110,12 @@ fn reload_config(
             println!("Adding entry, id={}", entry.id);
             let download = to_download(&entry, my_id);
 
+            println!("Creating temp file: {}", &download.temp_location);
+            match File::create(&download.temp_location) {
+                Err(_why) => panic!("Couldn't create file {}", &download.temp_location),
+                Ok(_file) => {},
+            };
+
             for piece_id in 0..download.torrent.info.piece_infos.len() {
                 queue.push_back(QueueEntry {
                     download_id: entry.id,
@@ -136,6 +144,8 @@ fn to_download(entry: &torrent_entries::TorrentEntry, my_id: &String) -> Downloa
         we_choked.push(false);
     }
 
+    let name = torrent.info.name.clone();
+
     Download {
         entry: torrent_entries::TorrentEntry::new(
             entry.id,
@@ -146,7 +156,8 @@ fn to_download(entry: &torrent_entries::TorrentEntry, my_id: &String) -> Downloa
         announcement: announcement,
         connections: connections,
         we_interested: we_interested,
-        we_choked: we_choked
+        we_choked: we_choked,
+        temp_location: format!("{}/{}_part", entry.download_path, name)
     }
 }
 

@@ -119,7 +119,7 @@ fn e2e() -> Result<(), Box<dyn std::error::Error>> {
         .arg("-t")
         .arg(get_absolute("./data/torrent_b_data.torrent"))
         .arg("-d")
-        .arg(RUSTORCLI_DIRECTORY)
+        .arg(get_absolute(RUSTORCLI_DIRECTORY))
         .assert()
         .success();
 
