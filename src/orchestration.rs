@@ -397,8 +397,7 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
                             } else {
                                 println!("Reading message payload...");
                                 let message = read_n(&stream, message_size).unwrap();
-                                let resptype = message[0];
-                                println!("Response type: {}", resptype);
+                                process_message(message);
                             }
                         }
                         Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
@@ -413,6 +412,48 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
                     // Connection is not open
                 }
             }
+        }
+    }
+}
+
+fn process_message(message: Vec<u8>) {
+    let resptype = message[0];
+    println!("Response type: {}", resptype);
+    match resptype {
+        0 => {
+            println!("Choked!");
+            // TODO: do something
+        },
+        1 => {
+            println!("Unchoked!");
+            // TODO: do something
+        },
+        2 => {
+            println!("Interested!");
+            // TODO: do something
+        },
+        3 => {
+            println!("Not interested!");
+            // TODO: do something
+        },
+        4 => {
+            println!("Have!");
+            // TODO: do something
+        },
+        5 => {
+            println!("Bitfield!");
+            // TODO: do something
+        },
+        6 => {
+            println!("Request!");
+            // TODO: do something
+        },
+        7 => {
+            println!("Piece!");
+            // TODO: do something
+        },
+        _ => {
+            println!("Unknown type!");
         }
     }
 }
