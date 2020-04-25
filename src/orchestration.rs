@@ -91,7 +91,7 @@ struct PeerInfo {
 
 struct QueueEntry {
     download_id: u32,
-    piece_id: u32,
+    piece_id: usize,
 }
 
 fn reload_config(
@@ -109,7 +109,7 @@ fn reload_config(
             for piece_id in 0..download.torrent.info.piece_infos.len() {
                 queue.push_back(QueueEntry {
                     download_id: entry.id,
-                    piece_id: piece_id as u32,
+                    piece_id: piece_id,
                 });
             }
 
@@ -218,15 +218,6 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String) {
         println!("Main loop iteration");
         println!("Entries in the queue: {}", queue.len());
 
-        match queue.pop_front() {
-            Some(c) => {
-                println!(
-                    "Next chunk: download_id={}, piece_id={}",
-                    c.download_id, c.piece_id
-                );
-            }
-            None => {}
-        }
         match rx.recv_timeout(time::Duration::from_millis(1000)) {
             Ok(event) => {
                 println!("{:?}", event);
@@ -245,11 +236,82 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String) {
         open_missing_connections(downloads, my_id);
         receive_messages(downloads);
 
-        // TODO: do work!
+        match queue.pop_front() {
+            Some(c) => {
+
+                match try_download(downloads, c.download_id, c.piece_id) {
+                    Ok(()) => {
+                        println!("Successfuly requested piece, keeping it out of the queue");
+                    },
+                    Err(()) => {
+                        println!("Failed to download the piece, moving it back to the queue");
+                        queue.push_back(c);
+                    }
+                }
+            }
+            None => {}
+        }
 
         thread::sleep(time::Duration::from_millis(1000));
         iteration += 1;
     }
+}
+
+fn try_download(downloads: &mut HashMap<u32, Download>, download_id: u32, piece_id: usize) -> Result<(), ()> {
+    println!(
+        "Trying to download bext chunk: download_id={}, piece_id={}",
+        download_id, piece_id
+    );
+    let download = downloads.get_mut(&download_id).unwrap();
+
+    match find_peer_for_piece(download, piece_id) {
+        Some(peer_id) => {
+            println!("Found peer, index={}", peer_id);
+            let v: &mut Vec<Option<TcpStream>> = &mut download.connections;
+            let mut o: Option<&mut TcpStream> = v[peer_id].as_mut();
+            let s: &mut TcpStream = o.as_mut().expect("hui");
+
+            request_piece(s, piece_id, download.torrent.info.piece_length);
+            return Ok(());
+        },
+        None => {
+            println!("Did not find appropriate peer");
+            return Err(());
+        }
+    }
+}
+
+fn request_piece(stream: &mut TcpStream, piece_id: usize, piece_length: i64)  {
+    println!("Requesting piece {} of length {}", piece_id, piece_length); // TODO: what about last piece?
+
+    let block_size = 16384;
+    let num_blocks = ((piece_length as f64) / (block_size as f64)).ceil() as usize;
+
+    for block in 0..num_blocks {
+        println!("Requesting block {}", block);
+
+        let start = block * block_size;
+
+        let mut payload: Vec<u8> = Vec::new();
+        payload.extend(u32_to_bytes(0));
+        payload.extend(u32_to_bytes(start as u32));
+        payload.extend(u32_to_bytes(block_size as u32));
+        send_message(stream, 6, &payload);
+    }
+
+    println!("Done requesting block");
+}
+
+fn find_peer_for_piece(download: &Download, piece_id: usize) -> Option<usize> {
+    for peer_index in 0..download.announcement.peers.len() {
+        // TODO: check if has piece!
+        // TODO: check if choked
+        // TODO: check if interested
+        if download.connections[peer_index].is_some() {
+            return Some(peer_index);
+        }
+    }
+    None
 }
 
 fn open_missing_connections(downloads: &mut HashMap<u32, Download>, my_id: &String) {
@@ -445,4 +507,26 @@ fn bytes_to_u32(bytes: &[u8]) -> u32 {
         + bytes[1] as u32 * BYTE_1
         + bytes[2] as u32 * BYTE_2
         + bytes[3] as u32 * BYTE_3
+}
+
+fn u32_to_bytes(integer: u32) -> Vec<u8> {
+    let mut rest = integer;
+    let first = rest / BYTE_0;
+    rest -= first * BYTE_0;
+    let second = rest / BYTE_1;
+    rest -= second * BYTE_1;
+    let third = rest / BYTE_2;
+    rest -= third * BYTE_2;
+    let fourth = rest;
+    vec![first as u8, second as u8, third as u8, fourth as u8]
+}
+
+fn send_message(stream: &mut TcpStream, msgtype: u8, payload: &Vec<u8>) {
+    let mut payload_with_type: Vec<u8> = Vec::new();
+    payload_with_type.push(msgtype);
+    payload_with_type.extend(payload);
+    let mut to_write: Vec<u8> = Vec::new();
+    to_write.extend(u32_to_bytes(payload_with_type.len() as u32));
+    to_write.extend(payload_with_type);
+    stream.write_all(&to_write).unwrap();
 }
