@@ -42,8 +42,6 @@ use std::net::SocketAddr;
 use std::io::Seek;
 use std::io::SeekFrom;
 
-use std::fs::OpenOptions;
-
 use std::os::unix::fs::OpenOptionsExt;
 
 pub struct Download {
@@ -54,6 +52,7 @@ pub struct Download {
     we_interested: Vec<bool>,
     we_choked: Vec<bool>,
     temp_location: String,
+    file: File
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -115,18 +114,8 @@ fn reload_config(
     for entry in entries {
         if !downloads.contains_key(&entry.id) {
             println!("Adding entry, id={}", entry.id);
-            let download = to_download(&entry, my_id);
 
-            println!("Creating temp file: {}", &download.temp_location);
-            match fs::OpenOptions::new()
-                .create(true)
-                .write(true)
-                .mode(0o770)
-                .open(&download.temp_location)
-            {
-                Err(_why) => panic!("Couldn't create file {}", &download.temp_location),
-                Ok(_file) => {}
-            };
+            let download = to_download(&entry, my_id);
 
             for piece_id in 0..download.torrent.info.piece_infos.len() {
                 queue.push_back(QueueEntry {
@@ -158,6 +147,22 @@ fn to_download(entry: &torrent_entries::TorrentEntry, my_id: &String) -> Downloa
 
     let name = torrent.info.name.clone();
 
+    let temp_location = format!("{}/{}_part", entry.download_path, name);
+    let file: File;
+
+    println!("Creating temp file: {}", &temp_location);
+    match fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .mode(0o770)
+        .open(&temp_location)
+    {
+        Err(_why) => panic!("Couldn't create file {}", &temp_location),
+        Ok(rs) => {
+            file = rs;
+        }
+    };
+
     Download {
         entry: torrent_entries::TorrentEntry::new(
             entry.id,
@@ -169,7 +174,8 @@ fn to_download(entry: &torrent_entries::TorrentEntry, my_id: &String) -> Downloa
         connections: connections,
         we_interested: we_interested,
         we_choked: we_choked,
-        temp_location: format!("{}/{}_part", entry.download_path, name),
+        temp_location: temp_location,
+        file: file
     }
 }
 
@@ -492,19 +498,14 @@ fn on_piece(message: Vec<u8>, download: &Download) {
         pieceindex, begin, blocklen, path
     );
 
-    let mut f = OpenOptions::new()
-        .read(false)
-        .write(true)
-        .create(false)
-        .open(path)
-        .unwrap();
+    let mut file = &download.file;
 
     let seek_pos: u64 =
         ((pieceindex as i64) * (download.torrent.info.piece_length as i64) + (begin as i64)) as u64;
     println!("Seeking position: {}", seek_pos);
-    f.seek(SeekFrom::Start(seek_pos)).unwrap();
+    file.seek(SeekFrom::Start(seek_pos)).unwrap();
     println!("Writing to file");
-    f.write(message.as_slice()).unwrap();
+    file.write(message.as_slice()).unwrap();
 }
 
 fn get_announcement(torrent: &Torrent, peer_id: &String) -> Result<Announcement, Error> {
