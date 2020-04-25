@@ -112,7 +112,7 @@ fn start(pid_opt: Option<i32>) {
     let daemonize = Daemonize::new()
         .pid_file("/tmp/rustorcli.pid")
         .working_directory("/tmp")
-        .umask(0o777)
+        .umask(0o000)
         .stdout(stdout)
         .stderr(stderr)
         .privileged_action(|| "Executed before drop privileges");

@@ -39,6 +39,13 @@ use std::net::TcpStream;
 
 use std::net::SocketAddr;
 
+use std::io::Seek;
+use std::io::SeekFrom;
+
+use std::fs::OpenOptions;
+
+use std::os::unix::fs::OpenOptionsExt;
+
 pub struct Download {
     entry: torrent_entries::TorrentEntry,
     torrent: Torrent,
@@ -46,7 +53,7 @@ pub struct Download {
     connections: Vec<Option<TcpStream>>,
     we_interested: Vec<bool>,
     we_choked: Vec<bool>,
-    temp_location: String
+    temp_location: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -111,9 +118,14 @@ fn reload_config(
             let download = to_download(&entry, my_id);
 
             println!("Creating temp file: {}", &download.temp_location);
-            match File::create(&download.temp_location) {
+            match fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .mode(0o770)
+                .open(&download.temp_location)
+            {
                 Err(_why) => panic!("Couldn't create file {}", &download.temp_location),
-                Ok(_file) => {},
+                Ok(_file) => {}
             };
 
             for piece_id in 0..download.torrent.info.piece_infos.len() {
@@ -157,7 +169,7 @@ fn to_download(entry: &torrent_entries::TorrentEntry, my_id: &String) -> Downloa
         connections: connections,
         we_interested: we_interested,
         we_choked: we_choked,
-        temp_location: format!("{}/{}_part", entry.download_path, name)
+        temp_location: format!("{}/{}_part", entry.download_path, name),
     }
 }
 
@@ -256,18 +268,15 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String) {
         receive_messages(downloads);
 
         match queue.pop_front() {
-            Some(c) => {
-
-                match try_download(downloads, c.download_id, c.piece_id) {
-                    Ok(()) => {
-                        println!("Successfuly requested piece, keeping it out of the queue");
-                    },
-                    Err(()) => {
-                        println!("Failed to download the piece, moving it back to the queue");
-                        queue.push_back(c);
-                    }
+            Some(c) => match try_download(downloads, c.download_id, c.piece_id) {
+                Ok(()) => {
+                    println!("Successfuly requested piece, keeping it out of the queue");
                 }
-            }
+                Err(()) => {
+                    println!("Failed to download the piece, moving it back to the queue");
+                    queue.push_back(c);
+                }
+            },
             None => {}
         }
 
@@ -276,7 +285,11 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String) {
     }
 }
 
-fn try_download(downloads: &mut HashMap<u32, Download>, download_id: u32, piece_id: usize) -> Result<(), ()> {
+fn try_download(
+    downloads: &mut HashMap<u32, Download>,
+    download_id: u32,
+    piece_id: usize,
+) -> Result<(), ()> {
     println!(
         "Trying to download bext chunk: download_id={}, piece_id={}",
         download_id, piece_id
@@ -299,7 +312,7 @@ fn try_download(downloads: &mut HashMap<u32, Download>, download_id: u32, piece_
 
             request_piece(s, piece_id, download.torrent.info.piece_length);
             return Ok(());
-        },
+        }
         None => {
             println!("Did not find appropriate peer");
             return Err(());
@@ -307,12 +320,12 @@ fn try_download(downloads: &mut HashMap<u32, Download>, download_id: u32, piece_
     }
 }
 
-fn send_interested(stream: &mut TcpStream)  {
+fn send_interested(stream: &mut TcpStream) {
     println!("Sending interested");
     send_message(stream, 2, &Vec::new());
 }
 
-fn request_piece(stream: &mut TcpStream, piece_id: usize, piece_length: i64)  {
+fn request_piece(stream: &mut TcpStream, piece_id: usize, piece_length: i64) {
     println!("Requesting piece {} of length {}", piece_id, piece_length); // TODO: what about last piece?
 
     let block_size = 16384;
@@ -324,7 +337,7 @@ fn request_piece(stream: &mut TcpStream, piece_id: usize, piece_length: i64)  {
         let start = block * block_size;
 
         let mut payload: Vec<u8> = Vec::new();
-        payload.extend(u32_to_bytes(0));
+        payload.extend(u32_to_bytes(piece_id as u32));
         payload.extend(u32_to_bytes(start as u32));
         payload.extend(u32_to_bytes(block_size as u32));
         send_message(stream, 6, &payload);
@@ -408,7 +421,7 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
                             } else {
                                 println!("Reading message payload...");
                                 let message = read_n(&stream, message_size).unwrap();
-                                process_message(message);
+                                process_message(message, download);
                             }
                         }
                         Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
@@ -427,46 +440,71 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
     }
 }
 
-fn process_message(message: Vec<u8>) {
+fn process_message(message: Vec<u8>, download: &Download) {
     let resptype = message[0];
     println!("Response type: {}", resptype);
     match resptype {
         0 => {
             println!("Choked!");
             // TODO: do something
-        },
+        }
         1 => {
             println!("Unchoked!");
             // TODO: do something
-        },
+        }
         2 => {
             println!("Interested!");
             // TODO: do something
-        },
+        }
         3 => {
             println!("Not interested!");
             // TODO: do something
-        },
+        }
         4 => {
             println!("Have!");
             // TODO: do something
-        },
+        }
         5 => {
             println!("Bitfield!");
             // TODO: do something
-        },
+        }
         6 => {
             println!("Request!");
             // TODO: do something
-        },
+        }
         7 => {
             println!("Piece!");
-            // TODO: do something
-        },
+            on_piece(message, download);
+        }
         _ => {
             println!("Unknown type!");
         }
     }
+}
+
+fn on_piece(message: Vec<u8>, download: &Download) {
+    let path = &download.temp_location;
+    let pieceindex = bytes_to_u32(&message[1..=4]);
+    let begin = bytes_to_u32(&message[5..=8]) as usize;
+    let blocklen = (message.len() - 9) as usize;
+    println!(
+        "Got piece {} from {}, len={}, writing to {}",
+        pieceindex, begin, blocklen, path
+    );
+
+    let mut f = OpenOptions::new()
+        .read(false)
+        .write(true)
+        .create(false)
+        .open(path)
+        .unwrap();
+
+    let seek_pos: u64 =
+        ((pieceindex as i64) * (download.torrent.info.piece_length as i64) + (begin as i64)) as u64;
+    println!("Seeking position: {}", seek_pos);
+    f.seek(SeekFrom::Start(seek_pos)).unwrap();
+    println!("Writing to file");
+    f.write(message.as_slice()).unwrap();
 }
 
 fn get_announcement(torrent: &Torrent, peer_id: &String) -> Result<Announcement, Error> {
