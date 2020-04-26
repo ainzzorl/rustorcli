@@ -17,6 +17,12 @@ use std::path::Path;
 
 use std::time::Duration;
 
+use sha2::{Digest, Sha256};
+
+use std::fs::File;
+
+use std::io;
+
 static TEMP_DIRECTORY: &str = "./target/tmp/e2e";
 static RUSTORCLI_DIRECTORY: &str = "./target/tmp/e2e/rustorcli";
 static TRANSMISSION_DIRECTORY: &str = "./target/tmp/transmission";
@@ -61,6 +67,9 @@ fn e2e() -> Result<(), Box<dyn std::error::Error>> {
         "./data/torrent_b_data",
         format!("{}/torrent_b_data", TRANSMISSION_DIRECTORY),
     )?;
+
+    let expected_hash_a = get_hash("./data/torrent_a_data");
+    let expected_hash_b = get_hash("./data/torrent_b_data");
 
     println!("Killing transmission");
     Exec::shell("killall transmission-daemon").join()?;
@@ -140,12 +149,13 @@ fn e2e() -> Result<(), Box<dyn std::error::Error>> {
             rustorcli_a_exists, rustorcli_b_exists, transmission_a_exists, transmission_b_exists
         );
 
-        if rustorcli_a_exists
-            && rustorcli_b_exists
-            && transmission_a_exists
-            && transmission_b_exists
-        {
+        // TODO: check download A when we can seed.
+        if rustorcli_b_exists && transmission_b_exists {
             println!("All files exist!");
+
+            let actual_rustorcli_hash_b = get_hash("./data/torrent_b_data.torrent");
+            assert_eq!(expected_hash_b, actual_rustorcli_hash_b);
+
             return Ok(());
         }
 
@@ -159,4 +169,12 @@ fn get_absolute(relative: &str) -> String {
     let cur = std::env::current_dir().unwrap();
     let cur_str = cur.to_str().unwrap();
     return format!("{}/{}", cur_str, relative);
+}
+
+fn get_hash(path: &str) -> String {
+    let mut file = File::open(path).unwrap();
+    let mut sha256 = Sha256::new();
+    io::copy(&mut file, &mut sha256).unwrap();
+    let hash = sha256.result();
+    return format!("{:x}", hash);
 }

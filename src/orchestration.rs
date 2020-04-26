@@ -52,7 +52,8 @@ pub struct Download {
     we_interested: Vec<bool>,
     we_choked: Vec<bool>,
     temp_location: String,
-    file: File
+    file: File,
+    have_block: Vec<Vec<bool>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -145,6 +146,33 @@ fn to_download(entry: &torrent_entries::TorrentEntry, my_id: &String) -> Downloa
         we_choked.push(true);
     }
 
+    let mut have: Vec<Vec<bool>> = Vec::new();
+    for piece_id in 0..torrent.info.piece_infos.len() {
+        let mut have_blocks = Vec::new();
+        let block_size = 16384;
+        let mut piece_length = torrent.info.piece_length;
+        if piece_id == torrent.info.piece_infos.len() - 1 {
+            let standard_piece_length = piece_length;
+            let in_previous = standard_piece_length * ((torrent.info.piece_infos.len() - 1) as i64);
+            let remaining = torrent.info.length - in_previous;
+            println!(
+                "Remaining in last piece = {} = {} - {} = {} - {} * {}",
+                remaining,
+                torrent.info.length,
+                in_previous,
+                torrent.info.length,
+                standard_piece_length,
+                torrent.info.piece_infos.len() - 1
+            );
+            piece_length = remaining;
+        }
+        let num_blocks = ((piece_length as f64) / (block_size as f64)).ceil() as usize;
+        for _ in 0..num_blocks {
+            have_blocks.push(false);
+        }
+        have.push(have_blocks);
+    }
+
     let name = torrent.info.name.clone();
 
     let temp_location = format!("{}/{}_part", entry.download_path, name);
@@ -175,7 +203,8 @@ fn to_download(entry: &torrent_entries::TorrentEntry, my_id: &String) -> Downloa
         we_interested: we_interested,
         we_choked: we_choked,
         temp_location: temp_location,
-        file: file
+        file: file,
+        have_block: have,
     }
 }
 
@@ -286,7 +315,7 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String) {
             None => {}
         }
 
-        thread::sleep(time::Duration::from_millis(1000));
+        thread::sleep(time::Duration::from_millis(100));
         iteration += 1;
     }
 }
@@ -316,7 +345,16 @@ fn try_download(
                 println!("We are already interested in the peer");
             }
 
-            request_piece(s, piece_id, download.torrent.info.piece_length);
+            let mut piece_length = download.torrent.info.piece_length.clone();
+            if piece_id == &download.torrent.info.piece_infos.len() - 1 {
+                let standard_piece_length = piece_length;
+                let in_previous =
+                    standard_piece_length * ((download.torrent.info.piece_infos.len() - 1) as i64);
+                let remaining = download.torrent.info.length - in_previous;
+                piece_length = remaining;
+            }
+
+            request_piece(s, piece_id, piece_length);
             return Ok(());
         }
         None => {
@@ -334,19 +372,28 @@ fn send_interested(stream: &mut TcpStream) {
 fn request_piece(stream: &mut TcpStream, piece_id: usize, piece_length: i64) {
     println!("Requesting piece {} of length {}", piece_id, piece_length); // TODO: what about last piece?
 
-    let block_size = 16384;
+    let block_size = 16384 as i64;
     let num_blocks = ((piece_length as f64) / (block_size as f64)).ceil() as usize;
 
-    for block in 0..num_blocks {
-        println!("Requesting block {}", block);
+    let mut remaining = piece_length;
 
-        let start = block * block_size;
+    for block in 0..num_blocks {
+        let start = (block as i64) * block_size;
+        let size = if remaining > block_size {
+            block_size
+        } else {
+            remaining
+        };
+
+        println!("Requesting block {} of size {}", block, size);
 
         let mut payload: Vec<u8> = Vec::new();
         payload.extend(u32_to_bytes(piece_id as u32));
         payload.extend(u32_to_bytes(start as u32));
-        payload.extend(u32_to_bytes(block_size as u32));
+        payload.extend(u32_to_bytes(size as u32));
         send_message(stream, 6, &payload);
+
+        remaining -= size;
     }
 
     println!("Done requesting block");
@@ -419,7 +466,7 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
 
         struct Msg {
             message: Vec<u8>,
-            peer_id: usize
+            peer_id: usize,
         }
         let mut to_process = Vec::new();
         for stream_opt in connections {
@@ -437,7 +484,7 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
                                 let message = read_n(&stream, message_size).unwrap();
                                 to_process.push(Msg {
                                     message: message,
-                                    peer_id: peer_id
+                                    peer_id: peer_id,
                                 });
                             }
                         }
@@ -504,11 +551,13 @@ fn process_message(message: Vec<u8>, download: &mut Download, peer_id: usize) {
     }
 }
 
-fn on_piece(message: Vec<u8>, download: &Download) {
+fn on_piece(message: Vec<u8>, download: &mut Download) {
     let path = &download.temp_location;
     let pieceindex = bytes_to_u32(&message[1..=4]);
     let begin = bytes_to_u32(&message[5..=8]) as usize;
     let blocklen = (message.len() - 9) as usize;
+    let block_size = 16384;
+    let block_id = begin / block_size;
     println!(
         "Got piece {} from {}, len={}, writing to {}",
         pieceindex, begin, blocklen, path
@@ -522,6 +571,48 @@ fn on_piece(message: Vec<u8>, download: &Download) {
     file.seek(SeekFrom::Start(seek_pos)).unwrap();
     println!("Writing to file");
     file.write(message.as_slice()).unwrap();
+
+    download.have_block[pieceindex as usize][block_id] = true;
+
+    check_if_done(download);
+}
+
+fn check_if_done(download: &Download) {
+    println!("Checking if the download is done...");
+    let mut num_blocks = 0;
+    let mut downloaded_blocks = 0;
+    let mut missing: String = String::from("");
+
+    for p_id in 0..download.have_block.len() {
+        let p = &download.have_block[p_id];
+        for b_id in 0..p.len() {
+            let b = p[b_id];
+            num_blocks += 1;
+            if b {
+                downloaded_blocks += 1;
+            } else {
+                missing = format!("piece={}, block={}", p_id, b_id);
+            }
+        }
+    }
+    if num_blocks == downloaded_blocks {
+        on_done(download);
+    } else {
+        println!(
+            "Not yet done: downloaded {}/{} blocks. E.g. missing: {}",
+            downloaded_blocks, num_blocks, missing
+        );
+    }
+}
+
+fn on_done(download: &Download) {
+    println!("Download is done!");
+    let dest = format!(
+        "{}/{}",
+        download.entry.download_path, download.torrent.info.name
+    );
+    println!("Moving {} to {}", download.temp_location, dest);
+    fs::rename(&download.temp_location, dest).unwrap();
 }
 
 fn get_announcement(torrent: &Torrent, peer_id: &String) -> Result<Announcement, Error> {
