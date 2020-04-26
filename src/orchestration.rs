@@ -142,7 +142,7 @@ fn to_download(entry: &torrent_entries::TorrentEntry, my_id: &String) -> Downloa
     for _ in 0..num_peers {
         connections.push(None);
         we_interested.push(false);
-        we_choked.push(false);
+        we_choked.push(true);
     }
 
     let name = torrent.info.name.clone();
@@ -297,7 +297,7 @@ fn try_download(
     piece_id: usize,
 ) -> Result<(), ()> {
     println!(
-        "Trying to download bext chunk: download_id={}, piece_id={}",
+        "Trying to download next chunk: download_id={}, piece_id={}",
         download_id, piece_id
     );
     let download = downloads.get_mut(&download_id).unwrap();
@@ -355,8 +355,7 @@ fn request_piece(stream: &mut TcpStream, piece_id: usize, piece_length: i64) {
 fn find_peer_for_piece(download: &Download, piece_id: usize) -> Option<usize> {
     for peer_index in 0..download.announcement.peers.len() {
         // TODO: check if has piece!
-        // TODO: check if choked
-        if download.connections[peer_index].is_some() {
+        if download.connections[peer_index].is_some() && !download.we_choked[peer_index] {
             return Some(peer_index);
         }
     }
@@ -413,8 +412,17 @@ fn open_missing_connections(downloads: &mut HashMap<u32, Download>, my_id: &Stri
 
 fn receive_messages(downloads: &mut HashMap<u32, Download>) {
     println!("Receiving messages connections");
-    for (_, download) in downloads {
-        for stream_opt in &download.connections {
+    for download in downloads.values_mut() {
+        let mut peer_id: usize = 0;
+
+        let connections = &download.connections;
+
+        struct Msg {
+            message: Vec<u8>,
+            peer_id: usize
+        }
+        let mut to_process = Vec::new();
+        for stream_opt in connections {
             match stream_opt {
                 Some(stream) => {
                     println!("Getting message size...");
@@ -427,7 +435,10 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
                             } else {
                                 println!("Reading message payload...");
                                 let message = read_n(&stream, message_size).unwrap();
-                                process_message(message, download);
+                                to_process.push(Msg {
+                                    message: message,
+                                    peer_id: peer_id
+                                });
                             }
                         }
                         Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
@@ -442,21 +453,26 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
                     // Connection is not open
                 }
             }
+            peer_id += 1;
+        }
+
+        for msg in to_process {
+            process_message(msg.message, download, msg.peer_id);
         }
     }
 }
 
-fn process_message(message: Vec<u8>, download: &Download) {
+fn process_message(message: Vec<u8>, download: &mut Download, peer_id: usize) {
     let resptype = message[0];
     println!("Response type: {}", resptype);
     match resptype {
         0 => {
             println!("Choked!");
-            // TODO: do something
+            download.we_choked[peer_id] = true;
         }
         1 => {
             println!("Unchoked!");
-            // TODO: do something
+            download.we_choked[peer_id] = false;
         }
         2 => {
             println!("Interested!");
