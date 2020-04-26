@@ -25,7 +25,7 @@ use std::io;
 
 static TEMP_DIRECTORY: &str = "./target/tmp/e2e";
 static RUSTORCLI_DIRECTORY: &str = "./target/tmp/e2e/rustorcli";
-static TRANSMISSION_DIRECTORY: &str = "./target/tmp/transmission";
+static TRANSMISSION_DIRECTORY: &str = "./target/tmp/e2e/transmission";
 
 static ATTEMPTS: u32 = 10;
 static BETWEEN_ATTEMPTS: Duration = time::Duration::from_secs(10);
