@@ -31,7 +31,6 @@ static ATTEMPTS: u32 = 10;
 static BETWEEN_ATTEMPTS: Duration = time::Duration::from_secs(10);
 
 // TODO: cleanup after the test, somehow
-// TODO: verify hashes
 // TODO: version control test files, or generate them on the fly
 // TODO: don't ignore, somehow
 
@@ -153,7 +152,8 @@ fn e2e() -> Result<(), Box<dyn std::error::Error>> {
         if rustorcli_b_exists && transmission_b_exists {
             println!("All files exist!");
 
-            let actual_rustorcli_hash_b = get_hash("./data/torrent_b_data.torrent");
+            let actual_rustorcli_hash_b =
+                get_hash(&format!("{}/torrent_b_data", RUSTORCLI_DIRECTORY));
             assert_eq!(expected_hash_b, actual_rustorcli_hash_b);
 
             return Ok(());

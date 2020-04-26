@@ -44,6 +44,12 @@ use std::io::SeekFrom;
 
 use std::os::unix::fs::OpenOptionsExt;
 
+extern crate crypto;
+
+extern crate hex;
+
+use self::crypto::digest::Digest;
+
 pub struct Download {
     entry: torrent_entries::TorrentEntry,
     torrent: Torrent,
@@ -103,6 +109,17 @@ struct PeerInfo {
 struct QueueEntry {
     download_id: u32,
     piece_id: usize,
+}
+
+pub type Sha1 = Vec<u8>;
+
+pub fn calculate_sha1(input: &[u8]) -> Sha1 {
+    let mut hasher = crypto::sha1::Sha1::new();
+    hasher.input(input);
+
+    let mut buf: Vec<u8> = vec![0; hasher.output_bytes()];
+    hasher.result(&mut buf);
+    buf
 }
 
 fn reload_config(
@@ -181,6 +198,7 @@ fn to_download(entry: &torrent_entries::TorrentEntry, my_id: &String) -> Downloa
     println!("Creating temp file: {}", &temp_location);
     match fs::OpenOptions::new()
         .create(true)
+        .read(true)
         .write(true)
         .mode(0o770)
         .open(&temp_location)
@@ -570,11 +588,56 @@ fn on_piece(message: Vec<u8>, download: &mut Download) {
     println!("Seeking position: {}", seek_pos);
     file.seek(SeekFrom::Start(seek_pos)).unwrap();
     println!("Writing to file");
-    file.write(message.as_slice()).unwrap();
+    file.write(&message[9..]).unwrap();
 
     download.have_block[pieceindex as usize][block_id] = true;
 
+    check_if_piece_done(download, pieceindex as usize);
     check_if_done(download);
+}
+
+fn check_if_piece_done(download: &mut Download, piece_id: usize) {
+    for b in &download.have_block[piece_id] {
+        if !b {
+            return;
+        }
+    }
+    println!("Piece {} seems to be downloaded...", piece_id);
+
+    let mut file = &download.file;
+
+    let offset = ((piece_id as i64) * &download.torrent.info.piece_length) as u64;
+
+    file.seek(io::SeekFrom::Start(offset)).unwrap();
+    let mut data = vec![];
+    file.take(download.torrent.info.piece_length as u64)
+        .read_to_end(&mut data)
+        .unwrap();
+
+    // TODO: don't do this every time, store per piece!
+    let pieces_shas: Vec<Sha1> = download
+        .torrent
+        .info
+        .pieces
+        .chunks(20)
+        .map(|v| v.to_owned())
+        .collect();
+    let expected_hash = &pieces_shas[piece_id];
+
+    let actual_hash = calculate_sha1(&data);
+
+    let is_complete = *expected_hash == actual_hash;
+    if is_complete {
+        println!("Hashes match for piece {}", piece_id);
+    } else {
+        panic!(
+            "Hashes don't match for piece {}. Expected: {}, actual: {}",
+            piece_id,
+            hex::encode(expected_hash),
+            hex::encode(actual_hash)
+        );
+        // TODO: do something smarter, e.g. retry
+    }
 }
 
 fn check_if_done(download: &Download) {
