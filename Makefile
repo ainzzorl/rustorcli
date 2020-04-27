@@ -10,3 +10,10 @@ e2e :
 
 cleanup:
 			 cargo run stop
+
+run-current:
+			 mkdir -p target/tmp/current
+			 cargo run stop
+			 rm -rf "$HOME/Application\ Support/rustorcli/"
+			 cargo run add -t ~/data/current.torrent -d ~/target/tmp/current
+			 cargo run start
