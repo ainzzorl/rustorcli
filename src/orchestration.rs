@@ -470,9 +470,15 @@ fn open_missing_connections(downloads: &mut HashMap<u32, Download>, my_id: &Stri
                 match TcpStream::connect_timeout(&socket_address, Duration::from_secs(1)) {
                     Ok(mut stream) => {
                         println!("Connected to the peer!");
-                        handshake(&mut stream, &download.torrent.info_hash, my_id);
-                        stream.set_nonblocking(true).unwrap();
-                        download.connections[peer_index] = Some(stream);
+                        match handshake(&mut stream, &download.torrent.info_hash, my_id) {
+                            Ok(()) => {
+                                stream.set_nonblocking(true).unwrap();
+                                download.connections[peer_index] = Some(stream);
+                            }
+                            Err(e) => {
+                                println!("Handshake failure: {:?}", e);
+                            }
+                        }
                     }
                     Err(e) => {
                         println!("Could not connect to peer: {:?}", e);
@@ -782,7 +788,11 @@ fn show(bs: &Vec<u8>) -> String {
     visible
 }
 
-fn handshake(stream: &mut TcpStream, info_hash: &Vec<u8>, my_id: &String) {
+fn handshake(
+    stream: &mut TcpStream,
+    info_hash: &Vec<u8>,
+    my_id: &String,
+) -> Result<(), std::io::Error> {
     println!("Starting handshake...");
     let mut to_write: Vec<u8> = Vec::new();
     to_write.push(19 as u8);
@@ -793,14 +803,14 @@ fn handshake(stream: &mut TcpStream, info_hash: &Vec<u8>, my_id: &String) {
     to_write.extend(my_id.bytes());
 
     let warr: &[u8] = &to_write; // c: &[u8]
-    stream.write_all(warr).unwrap();
+    stream.write_all(warr)?;
 
-    let pstrlen = read_n(stream, 1).unwrap();
-    read_n(stream, pstrlen[0] as u32).unwrap();
+    let pstrlen = read_n(stream, 1)?;
+    read_n(stream, pstrlen[0] as u32)?;
 
-    read_n(stream, 8).unwrap();
-    let in_info_hash = read_n(stream, 20).unwrap();
-    let in_peer_id = read_n(stream, 20).unwrap();
+    read_n(stream, 8)?;
+    let in_info_hash = read_n(stream, 20)?;
+    let in_peer_id = read_n(stream, 20)?;
 
     // validate info hash
     if in_info_hash != *info_hash {
@@ -813,6 +823,7 @@ fn handshake(stream: &mut TcpStream, info_hash: &Vec<u8>, my_id: &String) {
         println!("Invalid peer id");
     }
     println!("Completed handshake!");
+    return Ok(());
 }
 
 fn read_n(stream: &TcpStream, bytes_to_read: u32) -> Result<Vec<u8>, std::io::Error> {
@@ -832,7 +843,7 @@ fn read_n_to_buf(
 
     let bytes_read = stream.take(bytes_to_read as u64).read_to_end(buf);
     match bytes_read {
-        Ok(0) => panic!("Read 0"),
+        Ok(0) => return Err(std::io::Error::new(io::ErrorKind::Other, "Read 0 bytes!")),
         Ok(n) if n == bytes_to_read as usize => Ok(()),
         Ok(n) => read_n_to_buf(stream, buf, bytes_to_read - n as u32),
         Err(e) => return Err(std::io::Error::new(io::ErrorKind::WouldBlock, e)),
