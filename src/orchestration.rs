@@ -323,7 +323,9 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String) {
             }
         }
 
-        open_missing_connections(downloads, my_id);
+        if iteration % 50 == 0 {
+            open_missing_connections(downloads, my_id);
+        }
         receive_messages(downloads);
 
         match queue.pop_front() {
@@ -465,7 +467,7 @@ fn open_missing_connections(downloads: &mut HashMap<u32, Download>, my_id: &Stri
                 );
                 let socket_address: SocketAddr =
                     address.parse().expect("Unable to parse socket address");
-                match TcpStream::connect(&socket_address) {
+                match TcpStream::connect_timeout(&socket_address, Duration::from_secs(1)) {
                     Ok(mut stream) => {
                         println!("Connected to the peer!");
                         handshake(&mut stream, &download.torrent.info_hash, my_id);
