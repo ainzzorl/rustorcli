@@ -100,6 +100,12 @@ struct Announcement {
     peers: Vec<PeerInfo>,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+struct AnnouncementAltPeers {
+    interval: i64,
+    peers: ByteBuf,
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 struct PeerInfo {
     ip: String,
@@ -705,19 +711,73 @@ fn get_announcement(torrent: &Torrent, peer_id: &String) -> Result<Announcement,
     let mut buffer: Vec<u8> = vec![];
     response.copy_to(&mut buffer)?;
 
+    println!("Tracker response: {}", show(&buffer));
+
     let announcement: Announcement;
 
     match de::from_bytes::<Announcement>(&buffer) {
         Ok(t) => announcement = t,
         Err(e) => {
-            println!("ERROR: {:?}", e);
-            bail!("Could not parse tracker response");
+            println!(
+                "Could not parse tracker response: {:?}. Tring alternative structure...",
+                e
+            );
+            match de::from_bytes::<AnnouncementAltPeers>(&buffer) {
+                Ok(announcement_alt) => {
+                    println!("Managed to parse alternative announcement!");
+                    let peers = announcement_alt.peers;
+                    let num_peers = peers.len() / 6;
+                    let mut peers_parsed: Vec<PeerInfo> = vec![];
+                    for i in 0..num_peers {
+                        println!("Peer #{}", i);
+                        println!(
+                            "{}.{}.{}.{}:{}",
+                            peers[i * 6],
+                            peers[i * 6 + 1],
+                            peers[i * 6 + 2],
+                            peers[i * 6 + 3],
+                            (peers[i * 6 + 4] as u32) * 256 + (peers[i * 6 + 5] as u32)
+                        );
+                        let peer_info = PeerInfo {
+                            port: (peers[i * 6 + 4] as u64) * 256 + (peers[i * 6 + 5] as u64),
+                            ip: format!(
+                                "{}.{}.{}.{}",
+                                peers[i * 6],
+                                peers[i * 6 + 1],
+                                peers[i * 6 + 2],
+                                peers[i * 6 + 3]
+                            ),
+                        };
+                        peers_parsed.push(peer_info);
+                    }
+
+                    announcement = Announcement {
+                        interval: announcement_alt.interval,
+                        peers: peers_parsed,
+                    };
+                }
+                Err(e) => {
+                    panic!(
+                        "Could not parse tracker response with alternative structure either: {:?}",
+                        e
+                    );
+                }
+            }
         }
     }
 
     println!("Num peers: {}", announcement.peers.len());
 
     return Ok(announcement);
+}
+
+fn show(bs: &Vec<u8>) -> String {
+    let mut visible = String::new();
+    for &b in bs {
+        let part: Vec<u8> = std::ascii::escape_default(b).collect();
+        visible.push_str(std::str::from_utf8(&part).unwrap());
+    }
+    visible
 }
 
 fn handshake(stream: &mut TcpStream, info_hash: &Vec<u8>, my_id: &String) {
