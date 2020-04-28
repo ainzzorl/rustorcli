@@ -363,7 +363,7 @@ fn try_download(
 
     match find_peer_for_piece(download, piece_id) {
         Some(peer_id) => {
-            println!("Found peer, index={}", peer_id);
+            println!("Found peer, peer_id={}", peer_id);
             let v: &mut Vec<Option<TcpStream>> = &mut download.connections;
             let mut o: Option<&mut TcpStream> = v[peer_id].as_mut();
             let s: &mut TcpStream = o.as_mut().expect("Expected the stream to be present");
@@ -388,7 +388,6 @@ fn try_download(
             return Ok(());
         }
         None => {
-            println!("Did not find appropriate peer");
             return Err(());
         }
     }
@@ -430,12 +429,24 @@ fn request_piece(stream: &mut TcpStream, piece_id: usize, piece_length: i64) {
 }
 
 fn find_peer_for_piece(download: &Download, piece_id: usize) -> Option<usize> {
+    let mut no_connection = 0;
+    let mut choked = 0;
     for peer_index in 0..download.announcement.peers.len() {
         // TODO: check if has piece!
-        if download.connections[peer_index].is_some() && !download.we_choked[peer_index] {
-            return Some(peer_index);
+        if download.connections[peer_index].is_none() {
+            no_connection += 1;
+            continue;
         }
+        if !download.we_choked[peer_index] {
+            choked += 1;
+            continue;
+        }
+        return Some(peer_index);
     }
+    println!(
+        "Did not find appropriate peer. No connection: {}, choked: {}",
+        no_connection, choked
+    );
     None
 }
 
@@ -524,12 +535,12 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
                                             message: message,
                                             peer_id: peer_id,
                                         });
+                                        break;
                                     }
                                     Err(e) => {
                                         println!(
-                                            "Error reading message from peer={}: {:?}, resetting connection",
-                                            peer_id, e
-                                        );
+                                            "Error reading message from peer_id={}: {:?}, resetting connection",
+                                            peer_id, e);
                                         connections_to_reset.push(peer_id);
                                         break;
                                     }
@@ -537,11 +548,11 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
                             }
                         }
                         Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                            println!("Would-block error from peer={}: {:?}", peer_id, e);
+                            println!("Would-block error from peer_id={}: {:?}", peer_id, e);
                             break;
                         }
                         Err(e) => {
-                            println!("Unexpected error from peer={}: {:?}", peer_id, e);
+                            println!("Unexpected error from peer_id={}: {:?}", peer_id, e);
                             break;
                         }
                     }
@@ -612,7 +623,7 @@ fn on_piece(message: Vec<u8>, download: &mut Download, peer_id: usize) {
     let block_size = 16384;
     let block_id = begin / block_size;
     println!(
-        "Got piece {} from peer {}; from {}, len={}, writing to {}",
+        "Got piece {} from peer_id={}; from {}, len={}, writing to {}",
         pieceindex, peer_id, begin, blocklen, path
     );
 
@@ -758,7 +769,7 @@ fn get_announcement(torrent: &Torrent, peer_id: &String) -> Result<Announcement,
                     let num_peers = peers.len() / 6;
                     let mut peers_parsed: Vec<PeerInfo> = vec![];
                     for i in 0..num_peers {
-                        println!("Peer #{}", i);
+                        println!("peer_id=#{}", i);
                         println!(
                             "{}.{}.{}.{}:{}",
                             peers[i * 6],
