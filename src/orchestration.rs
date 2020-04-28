@@ -504,7 +504,7 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
         let mut connections_to_reset: Vec<usize> = Vec::new();
         for stream_opt in connections {
             match stream_opt {
-                Some(stream) => {
+                Some(stream) => loop {
                     println!("Getting message size...");
                     match read_n(&stream, 4) {
                         Ok(sizebytes) => {
@@ -533,12 +533,14 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
                         }
                         Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                             println!("Would-block error");
+                            break;
                         }
                         Err(e) => {
                             println!("Unexpected error: {:?}", e);
+                            break;
                         }
                     }
-                }
+                },
                 None => {
                     // Connection is not open
                 }
