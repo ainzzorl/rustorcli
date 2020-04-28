@@ -501,6 +501,7 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
             peer_id: usize,
         }
         let mut to_process = Vec::new();
+        let mut connections_to_reset: Vec<usize> = Vec::new();
         for stream_opt in connections {
             match stream_opt {
                 Some(stream) => {
@@ -513,11 +514,21 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
                                 println!("Looks like keepalive");
                             } else {
                                 println!("Reading message payload...");
-                                let message = read_n(&stream, message_size).unwrap();
-                                to_process.push(Msg {
-                                    message: message,
-                                    peer_id: peer_id,
-                                });
+                                match read_n(&stream, message_size) {
+                                    Ok(message) => {
+                                        to_process.push(Msg {
+                                            message: message,
+                                            peer_id: peer_id,
+                                        });
+                                    }
+                                    Err(e) => {
+                                        println!(
+                                            "Error reading message: {:?}, resetting connection",
+                                            e
+                                        );
+                                        connections_to_reset.push(peer_id);
+                                    }
+                                }
                             }
                         }
                         Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
@@ -537,6 +548,9 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
 
         for msg in to_process {
             process_message(msg.message, download, msg.peer_id);
+        }
+        for p in connections_to_reset {
+            download.connections[p] = None;
         }
     }
 }
