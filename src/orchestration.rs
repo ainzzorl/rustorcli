@@ -308,19 +308,23 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String) {
         println!("Main loop iteration");
         println!("Entries in the queue: {}", queue.len());
 
-        match rx.recv_timeout(time::Duration::from_millis(1000)) {
-            Ok(event) => {
-                println!("{:?}", event);
-                reload_config(downloads, &my_id, &mut queue);
-            }
-            Err(e) => {
-                println!("watch error: {:?}", e);
-                // TODO: remove this
-                if iteration % 10 == 0 {
-                    println!("Reloading on iteration {}", iteration);
-                    reload_config(downloads, &my_id, &mut queue);
-                }
-            }
+        // match rx.recv_timeout(time::Duration::from_millis(1000)) {
+        //     Ok(event) => {
+        //         println!("{:?}", event);
+        //         reload_config(downloads, &my_id, &mut queue);
+        //     }
+        //     Err(e) => {
+        //         println!("watch error: {:?}", e);
+        //         // TODO: remove this
+        //         if iteration % 10 == 0 {
+        //             println!("Reloading on iteration {}", iteration);
+        //             reload_config(downloads, &my_id, &mut queue);
+        //         }
+        //     }
+        // }
+        if iteration % 100 == 0 {
+            println!("Reloading config on iteration {}", iteration);
+            reload_config(downloads, &my_id, &mut queue);
         }
 
         if iteration % 50 == 0 {
@@ -341,7 +345,7 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String) {
             None => {}
         }
 
-        thread::sleep(time::Duration::from_millis(100));
+        thread::sleep(time::Duration::from_millis(1000));
         iteration += 1;
     }
 }
@@ -462,8 +466,8 @@ fn open_missing_connections(downloads: &mut HashMap<u32, Download>, my_id: &Stri
                 }
                 let address = format!("{}:{}", ip, peer.port);
                 println!(
-                    "Trying to open missing connection; download_id={}, peer_id={}, address={}",
-                    download_id, peer_index, address
+                    "Trying to open missing connection; download_id={}, peer_id={}, address={}, peer_id={}",
+                    download_id, peer_index, address, peer_index
                 );
                 let socket_address: SocketAddr =
                     address.parse().expect("Unable to parse socket address");
@@ -505,7 +509,7 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
         for stream_opt in connections {
             match stream_opt {
                 Some(stream) => loop {
-                    println!("Getting message size...");
+                    println!("Getting message size... peer_id={}", peer_id);
                     match read_n(&stream, 4) {
                         Ok(sizebytes) => {
                             let message_size = bytes_to_u32(&sizebytes);
@@ -523,20 +527,21 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
                                     }
                                     Err(e) => {
                                         println!(
-                                            "Error reading message: {:?}, resetting connection",
-                                            e
+                                            "Error reading message from peer={}: {:?}, resetting connection",
+                                            peer_id, e
                                         );
                                         connections_to_reset.push(peer_id);
+                                        break;
                                     }
                                 }
                             }
                         }
                         Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                            println!("Would-block error");
+                            println!("Would-block error from peer={}: {:?}", peer_id, e);
                             break;
                         }
                         Err(e) => {
-                            println!("Unexpected error: {:?}", e);
+                            println!("Unexpected error from peer={}: {:?}", peer_id, e);
                             break;
                         }
                     }
@@ -562,44 +567,44 @@ fn process_message(message: Vec<u8>, download: &mut Download, peer_id: usize) {
     println!("Response type: {}", resptype);
     match resptype {
         0 => {
-            println!("Choked!");
+            println!("Choked! peer_id={}", peer_id);
             download.we_choked[peer_id] = true;
         }
         1 => {
-            println!("Unchoked!");
+            println!("Unchoked! peer_id={}", peer_id);
             download.we_choked[peer_id] = false;
         }
         2 => {
-            println!("Interested!");
+            println!("Interested! peer_id={}", peer_id);
             // TODO: do something
         }
         3 => {
-            println!("Not interested!");
+            println!("Not interested! peer_id={}", peer_id);
             // TODO: do something
         }
         4 => {
-            println!("Have!");
+            println!("Have! peer_id={}", peer_id);
             // TODO: do something
         }
         5 => {
-            println!("Bitfield!");
+            println!("Bitfield! peer_id={}", peer_id);
             // TODO: do something
         }
         6 => {
-            println!("Request!");
+            println!("Request! peer_id={}", peer_id);
             // TODO: do something
         }
         7 => {
-            println!("Piece!");
-            on_piece(message, download);
+            println!("Piece! peer_id={}", peer_id);
+            on_piece(message, download, peer_id);
         }
         _ => {
-            println!("Unknown type!");
+            println!("Unknown type! peer_id={}", peer_id);
         }
     }
 }
 
-fn on_piece(message: Vec<u8>, download: &mut Download) {
+fn on_piece(message: Vec<u8>, download: &mut Download, peer_id: usize) {
     let path = &download.temp_location;
     let pieceindex = bytes_to_u32(&message[1..=4]);
     let begin = bytes_to_u32(&message[5..=8]) as usize;
@@ -607,8 +612,8 @@ fn on_piece(message: Vec<u8>, download: &mut Download) {
     let block_size = 16384;
     let block_id = begin / block_size;
     println!(
-        "Got piece {} from {}, len={}, writing to {}",
-        pieceindex, begin, blocklen, path
+        "Got piece {} from peer {}; from {}, len={}, writing to {}",
+        pieceindex, peer_id, begin, blocklen, path
     );
 
     let mut file = &download.file;
