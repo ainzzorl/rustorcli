@@ -50,6 +50,8 @@ extern crate hex;
 
 use self::crypto::digest::Digest;
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
 pub struct Download {
     entry: torrent_entries::TorrentEntry,
     torrent: Torrent,
@@ -304,6 +306,7 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String) {
     reload_config(downloads, &my_id, &mut queue);
 
     let mut iteration = 0;
+    let mut last_missing_reopen = 0;
     loop {
         println!("Main loop iteration #{}", iteration);
         println!("Entries in the queue: {}", queue.len());
@@ -327,8 +330,10 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String) {
             reload_config(downloads, &my_id, &mut queue);
         }
 
-        if iteration % 50 == 0 {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_millis();
+        if now - last_missing_reopen >= 60000 {
             open_missing_connections(downloads, my_id);
+            last_missing_reopen = now;
         }
         receive_messages(downloads);
 
@@ -345,7 +350,7 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String) {
             None => {}
         }
 
-        thread::sleep(time::Duration::from_millis(1000));
+        thread::sleep(time::Duration::from_millis(100));
         iteration += 1;
     }
 }
