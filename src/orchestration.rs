@@ -305,7 +305,7 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String) {
 
     let mut iteration = 0;
     loop {
-        println!("Main loop iteration");
+        println!("Main loop iteration #{}", iteration);
         println!("Entries in the queue: {}", queue.len());
 
         // match rx.recv_timeout(time::Duration::from_millis(1000)) {
@@ -369,7 +369,14 @@ fn try_download(
             let s: &mut TcpStream = o.as_mut().expect("Expected the stream to be present");
 
             if !download.we_interested[peer_id] {
-                send_interested(s);
+                if send_interested(s).is_err() {
+                    println!(
+                        "Couldn't send interested - resetting connection with peer_id={}",
+                        peer_id
+                    );
+                    v[peer_id] = None;
+                    return Err(());
+                }
                 download.we_interested[peer_id] = true;
             } else {
                 println!("We are already interested in the peer");
@@ -384,7 +391,14 @@ fn try_download(
                 piece_length = remaining;
             }
 
-            request_piece(s, piece_id, piece_length);
+            if request_piece(s, piece_id, piece_length).is_err() {
+                println!(
+                    "Couldn't request piece - resetting connection with peer_id={}",
+                    peer_id
+                );
+                v[peer_id] = None;
+                return Err(());
+            }
             return Ok(());
         }
         None => {
@@ -393,12 +407,16 @@ fn try_download(
     }
 }
 
-fn send_interested(stream: &mut TcpStream) {
+fn send_interested(stream: &mut TcpStream) -> Result<(), std::io::Error> {
     println!("Sending interested");
-    send_message(stream, 2, &Vec::new());
+    return send_message(stream, 2, &Vec::new());
 }
 
-fn request_piece(stream: &mut TcpStream, piece_id: usize, piece_length: i64) {
+fn request_piece(
+    stream: &mut TcpStream,
+    piece_id: usize,
+    piece_length: i64,
+) -> Result<(), std::io::Error> {
     println!("Requesting piece {} of length {}", piece_id, piece_length); // TODO: what about last piece?
 
     let block_size = 16384 as i64;
@@ -420,12 +438,13 @@ fn request_piece(stream: &mut TcpStream, piece_id: usize, piece_length: i64) {
         payload.extend(u32_to_bytes(piece_id as u32));
         payload.extend(u32_to_bytes(start as u32));
         payload.extend(u32_to_bytes(size as u32));
-        send_message(stream, 6, &payload);
+        send_message(stream, 6, &payload)?;
 
         remaining -= size;
     }
 
     println!("Done requesting block");
+    return Ok(());
 }
 
 fn find_peer_for_piece(download: &Download, piece_id: usize) -> Option<usize> {
@@ -437,7 +456,7 @@ fn find_peer_for_piece(download: &Download, piece_id: usize) -> Option<usize> {
             no_connection += 1;
             continue;
         }
-        if !download.we_choked[peer_index] {
+        if download.we_choked[peer_index] {
             choked += 1;
             continue;
         }
@@ -521,7 +540,7 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
             match stream_opt {
                 Some(stream) => loop {
                     println!("Getting message size... peer_id={}", peer_id);
-                    match read_n(&stream, 4) {
+                    match read_n(&stream, 4, false) {
                         Ok(sizebytes) => {
                             let message_size = bytes_to_u32(&sizebytes);
                             println!("Message size: {}", message_size);
@@ -529,7 +548,7 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
                                 println!("Looks like keepalive");
                             } else {
                                 println!("Reading message payload...");
-                                match read_n(&stream, message_size) {
+                                match read_n(&stream, message_size, true) {
                                     Ok(message) => {
                                         to_process.push(Msg {
                                             message: message,
@@ -837,12 +856,12 @@ fn handshake(
     let warr: &[u8] = &to_write; // c: &[u8]
     stream.write_all(warr)?;
 
-    let pstrlen = read_n(stream, 1)?;
-    read_n(stream, pstrlen[0] as u32)?;
+    let pstrlen = read_n(stream, 1, true)?;
+    read_n(stream, pstrlen[0] as u32, true)?;
 
-    read_n(stream, 8)?;
-    let in_info_hash = read_n(stream, 20)?;
-    let in_peer_id = read_n(stream, 20)?;
+    read_n(stream, 8, true)?;
+    let in_info_hash = read_n(stream, 20, true)?;
+    let in_peer_id = read_n(stream, 20, true)?;
 
     // validate info hash
     if in_info_hash != *info_hash {
@@ -858,9 +877,13 @@ fn handshake(
     return Ok(());
 }
 
-fn read_n(stream: &TcpStream, bytes_to_read: u32) -> Result<Vec<u8>, std::io::Error> {
+fn read_n(
+    stream: &TcpStream,
+    bytes_to_read: u32,
+    blocking: bool,
+) -> Result<Vec<u8>, std::io::Error> {
     let mut buf = vec![];
-    read_n_to_buf(stream, &mut buf, bytes_to_read)?;
+    read_n_to_buf(stream, &mut buf, bytes_to_read, blocking)?;
     Ok(buf)
 }
 
@@ -868,17 +891,30 @@ fn read_n_to_buf(
     stream: &TcpStream,
     buf: &mut Vec<u8>,
     bytes_to_read: u32,
+    blocking: bool,
 ) -> Result<(), std::io::Error> {
     if bytes_to_read == 0 {
         return Ok(());
     }
 
-    let bytes_read = stream.take(bytes_to_read as u64).read_to_end(buf);
-    match bytes_read {
-        Ok(0) => return Err(std::io::Error::new(io::ErrorKind::Other, "Read 0 bytes!")),
-        Ok(n) if n == bytes_to_read as usize => Ok(()),
-        Ok(n) => read_n_to_buf(stream, buf, bytes_to_read - n as u32),
-        Err(e) => return Err(std::io::Error::new(io::ErrorKind::WouldBlock, e)),
+    if blocking {
+        stream.set_nonblocking(false).unwrap();
+        let bytes_read = stream.take(bytes_to_read as u64).read_to_end(buf);
+        match bytes_read {
+            Ok(0) => return Err(std::io::Error::new(io::ErrorKind::Other, "Read 0 bytes!")),
+            Ok(n) if n == bytes_to_read as usize => Ok(()),
+            Ok(n) => read_n_to_buf(stream, buf, bytes_to_read - n as u32, blocking),
+            Err(e) => return Err(std::io::Error::new(io::ErrorKind::Other, e)),
+        }
+    } else {
+        stream.set_nonblocking(true).unwrap();
+        let bytes_read = stream.take(bytes_to_read as u64).read_to_end(buf);
+        match bytes_read {
+            Ok(0) => return Err(std::io::Error::new(io::ErrorKind::Other, "Read 0 bytes!")),
+            Ok(n) if n == bytes_to_read as usize => Ok(()),
+            Ok(n) => read_n_to_buf(stream, buf, bytes_to_read - n as u32, blocking),
+            Err(e) => return Err(std::io::Error::new(io::ErrorKind::WouldBlock, e)),
+        }
     }
 }
 
@@ -906,12 +942,16 @@ fn u32_to_bytes(integer: u32) -> Vec<u8> {
     vec![first as u8, second as u8, third as u8, fourth as u8]
 }
 
-fn send_message(stream: &mut TcpStream, msgtype: u8, payload: &Vec<u8>) {
+fn send_message(
+    stream: &mut TcpStream,
+    msgtype: u8,
+    payload: &Vec<u8>,
+) -> Result<(), std::io::Error> {
     let mut payload_with_type: Vec<u8> = Vec::new();
     payload_with_type.push(msgtype);
     payload_with_type.extend(payload);
     let mut to_write: Vec<u8> = Vec::new();
     to_write.extend(u32_to_bytes(payload_with_type.len() as u32));
     to_write.extend(payload_with_type);
-    stream.write_all(&to_write).unwrap();
+    return stream.write_all(&to_write);
 }

@@ -109,9 +109,6 @@ fn e2e() -> Result<(), Box<dyn std::error::Error>> {
     let config_directory = torrent_entries::config_directory();
     std::fs::remove_dir_all(config_directory).ok();
 
-    println!("Starting rustorcli");
-    Command::main_binary()?.arg("start").assert().success();
-
     println!("Adding torrents to rustorcli");
     // TODO: add this once we can seed.
     // Command::main_binary()?
@@ -130,6 +127,9 @@ fn e2e() -> Result<(), Box<dyn std::error::Error>> {
         .arg(get_absolute(RUSTORCLI_DIRECTORY))
         .assert()
         .success();
+
+    println!("Starting rustorcli");
+    Command::main_binary()?.arg("start").assert().success();
 
     for attempt in 1..=ATTEMPTS {
         println!("Attempt {}/{}", attempt, ATTEMPTS);
