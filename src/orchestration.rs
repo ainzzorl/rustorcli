@@ -52,6 +52,8 @@ use self::crypto::digest::Digest;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use std::path::Path;
+
 pub struct Download {
     entry: torrent_entries::TorrentEntry,
     torrent: Torrent,
@@ -60,6 +62,7 @@ pub struct Download {
     we_interested: Vec<bool>,
     we_choked: Vec<bool>,
     temp_location: String,
+    final_location: String,
     file: File,
     have_block: Vec<Vec<bool>>,
 }
@@ -157,21 +160,9 @@ fn reload_config(
     // TODO: remove removed downloads
 }
 
-fn to_download(entry: &torrent_entries::TorrentEntry, my_id: &String) -> Download {
-    let torrent = read_torrent(&(entry.torrent_path));
-    let announcement = get_announcement(&torrent, &my_id).unwrap();
-
-    let num_peers = announcement.peers.len();
-    let mut connections: Vec<Option<TcpStream>> = Vec::new();
-    let mut we_interested: Vec<bool> = Vec::new();
-    let mut we_choked: Vec<bool> = Vec::new();
-    for _ in 0..num_peers {
-        connections.push(None);
-        we_interested.push(false);
-        we_choked.push(true);
-    }
-
+fn get_have(download: &Download) -> Vec<Vec<bool>> {
     let mut have: Vec<Vec<bool>> = Vec::new();
+    let torrent = &download.torrent;
     for piece_id in 0..torrent.info.piece_infos.len() {
         let mut have_blocks = Vec::new();
         let block_size = 16384;
@@ -197,27 +188,61 @@ fn to_download(entry: &torrent_entries::TorrentEntry, my_id: &String) -> Downloa
         }
         have.push(have_blocks);
     }
+    return have;
+}
+
+fn to_download(entry: &torrent_entries::TorrentEntry, my_id: &String) -> Download {
+    let torrent = read_torrent(&(entry.torrent_path));
+    let announcement = get_announcement(&torrent, &my_id).unwrap();
+
+    let num_peers = announcement.peers.len();
+    let mut connections: Vec<Option<TcpStream>> = Vec::new();
+    let mut we_interested: Vec<bool> = Vec::new();
+    let mut we_choked: Vec<bool> = Vec::new();
+    for _ in 0..num_peers {
+        connections.push(None);
+        we_interested.push(false);
+        we_choked.push(true);
+    }
+
 
     let name = torrent.info.name.clone();
 
     let temp_location = format!("{}/{}_part", entry.download_path, name);
+    let final_location = format!("{}/{}", entry.download_path, name);
     let file: File;
 
-    println!("Creating temp file: {}", &temp_location);
-    match fs::OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .mode(0o770)
-        .open(&temp_location)
-    {
-        Err(_why) => panic!("Couldn't create file {}", &temp_location),
-        Ok(rs) => {
-            file = rs;
-        }
-    };
+    if !Path::new(&temp_location).exists() && !Path::new(&final_location).exists() {
+        println!("Creating temp file: {}", &temp_location);
+        match fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .mode(0o770)
+            .open(&temp_location)
+        {
+            Err(_why) => panic!("Couldn't create file {}", &temp_location),
+            Ok(rs) => {
+                file = rs;
+            }
+        };
+    } else if Path::new(&final_location).exists() {
+        file = fs::OpenOptions::new()
+            .create(false)
+            .read(true)
+            .write(false)
+            .mode(0o770)
+            .open(&final_location).unwrap();
+    } else {
+        file = fs::OpenOptions::new()
+            .create(false)
+            .read(true)
+            .write(true)
+            .mode(0o770)
+            .open(&temp_location).unwrap();
+    }
 
-    Download {
+    let mut download = Download {
         entry: torrent_entries::TorrentEntry::new(
             entry.id,
             entry.torrent_path.clone(),
@@ -229,9 +254,15 @@ fn to_download(entry: &torrent_entries::TorrentEntry, my_id: &String) -> Downloa
         we_interested: we_interested,
         we_choked: we_choked,
         temp_location: temp_location,
+        final_location: final_location,
         file: file,
-        have_block: have,
-    }
+        have_block: Vec::new(),
+    };
+
+    let have = get_have(&download);
+    download.have_block = have;
+
+    return download;
 }
 
 fn read_torrent(path: &String) -> Torrent {
@@ -294,12 +325,12 @@ pub fn start() {
 
 fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String) {
     // TODO: extract this to some method
-    let (tx, rx) = channel();
-    let mut watcher: RecommendedWatcher = Watcher::new(tx, Duration::from_secs(2)).unwrap();
-    let config_directory = torrent_entries::config_directory();
-    watcher
-        .watch(config_directory, RecursiveMode::Recursive)
-        .unwrap();
+    // let (tx, rx) = channel();
+    // let mut watcher: RecommendedWatcher = Watcher::new(tx, Duration::from_secs(2)).unwrap();
+    // let config_directory = torrent_entries::config_directory();
+    // watcher
+    //     .watch(config_directory, RecursiveMode::Recursive)
+    //     .unwrap();
 
     let mut queue = VecDeque::new();
 
@@ -710,7 +741,7 @@ fn check_if_piece_done(download: &mut Download, piece_id: usize) {
     }
 }
 
-fn check_if_done(download: &Download) {
+fn is_done(download: &Download) -> bool {
     println!("Checking if the download is done...");
     let mut num_blocks = 0;
     let mut downloaded_blocks = 0;
@@ -728,13 +759,17 @@ fn check_if_done(download: &Download) {
             }
         }
     }
-    if num_blocks == downloaded_blocks {
-        on_done(download);
-    } else {
+    if num_blocks != downloaded_blocks {
         println!(
-            "Not yet done: downloaded {}/{} blocks. E.g. missing: {}",
-            downloaded_blocks, num_blocks, missing
-        );
+        "Not yet done: downloaded {}/{} blocks. E.g. missing: {}",
+        downloaded_blocks, num_blocks, missing);
+    }
+    return num_blocks == downloaded_blocks;
+}
+
+fn check_if_done(download: &Download) {
+    if is_done(download) {
+        on_done(download);
     }
 }
 
