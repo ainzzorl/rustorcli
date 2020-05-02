@@ -133,6 +133,15 @@ pub fn calculate_sha1(input: &[u8]) -> Sha1 {
     buf
 }
 
+fn has_piece(download: &Download, piece_id: usize) -> bool {
+    for b in &download.have_block[piece_id] {
+        if !b {
+            return false;
+        }
+    }
+    return true;
+}
+
 fn reload_config(
     downloads: &mut HashMap<u32, Download>,
     my_id: &String,
@@ -147,10 +156,12 @@ fn reload_config(
             let download = to_download(&entry, my_id);
 
             for piece_id in 0..download.torrent.info.piece_infos.len() {
-                queue.push_back(QueueEntry {
-                    download_id: entry.id,
-                    piece_id: piece_id,
-                });
+                if !has_piece(&download, piece_id) {
+                    queue.push_back(QueueEntry {
+                        download_id: entry.id,
+                        piece_id: piece_id,
+                    });
+                }
             }
 
             downloads.insert(entry.id, download);
@@ -160,13 +171,16 @@ fn reload_config(
     // TODO: remove removed downloads
 }
 
-fn get_have(download: &Download) -> Vec<Vec<bool>> {
+fn get_have(download: &mut Download) -> Vec<Vec<bool>> {
+    println!("Populating _have_");
+    let mut file = &download.file;
     let mut have: Vec<Vec<bool>> = Vec::new();
     let torrent = &download.torrent;
     for piece_id in 0..torrent.info.piece_infos.len() {
         let mut have_blocks = Vec::new();
         let block_size = 16384;
         let mut piece_length = torrent.info.piece_length;
+
         if piece_id == torrent.info.piece_infos.len() - 1 {
             let standard_piece_length = piece_length;
             let in_previous = standard_piece_length * ((torrent.info.piece_infos.len() - 1) as i64);
@@ -182,9 +196,33 @@ fn get_have(download: &Download) -> Vec<Vec<bool>> {
             );
             piece_length = remaining;
         }
+
         let num_blocks = ((piece_length as f64) / (block_size as f64)).ceil() as usize;
+
+        let offset = ((piece_id as i64) * &download.torrent.info.piece_length) as u64;
+        file.seek(io::SeekFrom::Start(offset)).unwrap();
+        let mut data = vec![];
+        file.take(piece_length as u64)
+            .read_to_end(&mut data)
+            .unwrap();
+
+        // TODO: don't do this every time, store per piece!
+        let pieces_shas: Vec<Sha1> = download
+            .torrent
+            .info
+            .pieces
+            .chunks(20)
+            .map(|v| v.to_owned())
+            .collect();
+        let expected_hash = &pieces_shas[piece_id];
+
+        let actual_hash = calculate_sha1(&data);
+
+        let have_this_piece = *expected_hash == actual_hash;
+        println!("Have piece_id={}? {}", piece_id, have_this_piece);
+
         for _ in 0..num_blocks {
-            have_blocks.push(false);
+            have_blocks.push(have_this_piece);
         }
         have.push(have_blocks);
     }
@@ -204,7 +242,6 @@ fn to_download(entry: &torrent_entries::TorrentEntry, my_id: &String) -> Downloa
         we_interested.push(false);
         we_choked.push(true);
     }
-
 
     let name = torrent.info.name.clone();
 
@@ -232,14 +269,16 @@ fn to_download(entry: &torrent_entries::TorrentEntry, my_id: &String) -> Downloa
             .read(true)
             .write(false)
             .mode(0o770)
-            .open(&final_location).unwrap();
+            .open(&final_location)
+            .unwrap();
     } else {
         file = fs::OpenOptions::new()
             .create(false)
             .read(true)
             .write(true)
             .mode(0o770)
-            .open(&temp_location).unwrap();
+            .open(&temp_location)
+            .unwrap();
     }
 
     let mut download = Download {
@@ -259,7 +298,7 @@ fn to_download(entry: &torrent_entries::TorrentEntry, my_id: &String) -> Downloa
         have_block: Vec::new(),
     };
 
-    let have = get_have(&download);
+    let have = get_have(&mut download);
     download.have_block = have;
 
     return download;
@@ -361,7 +400,10 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String) {
             reload_config(downloads, &my_id, &mut queue);
         }
 
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_millis();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_millis();
         if now - last_missing_reopen >= 60000 {
             open_missing_connections(downloads, my_id);
             last_missing_reopen = now;
@@ -761,8 +803,9 @@ fn is_done(download: &Download) -> bool {
     }
     if num_blocks != downloaded_blocks {
         println!(
-        "Not yet done: downloaded {}/{} blocks. E.g. missing: {}",
-        downloaded_blocks, num_blocks, missing);
+            "Not yet done: downloaded {}/{} blocks. E.g. missing: {}",
+            downloaded_blocks, num_blocks, missing
+        );
     }
     return num_blocks == downloaded_blocks;
 }

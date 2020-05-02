@@ -110,15 +110,14 @@ fn e2e() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::remove_dir_all(config_directory).ok();
 
     println!("Adding torrents to rustorcli");
-    // TODO: add this once we can seed.
-    // Command::main_binary()?
-    //     .arg("add")
-    //     .arg("-t")
-    //     .arg(get_absolute("./data/torrent_a_data.torrent"))
-    //     .arg("-d")
-    //     .arg(RUSTORCLI_DIRECTORY)
-    //     .assert()
-    //     .success();
+    Command::main_binary()?
+        .arg("add")
+        .arg("-t")
+        .arg(get_absolute("./data/torrent_a_data.torrent"))
+        .arg("-d")
+        .arg(get_absolute(RUSTORCLI_DIRECTORY))
+        .assert()
+        .success();
     Command::main_binary()?
         .arg("add")
         .arg("-t")
