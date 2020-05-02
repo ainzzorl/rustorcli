@@ -147,9 +147,16 @@ fn e2e() -> Result<(), Box<dyn std::error::Error>> {
             rustorcli_a_exists, rustorcli_b_exists, transmission_a_exists, transmission_b_exists
         );
 
-        // TODO: check download A when we can seed.
-        if rustorcli_b_exists && transmission_b_exists {
+        if rustorcli_a_exists
+            && transmission_a_exists
+            && rustorcli_b_exists
+            && transmission_b_exists
+        {
             println!("All files exist!");
+
+            let actual_transmission_hash_a =
+                get_hash(&format!("{}/torrent_a_data", TRANSMISSION_DIRECTORY));
+            assert_eq!(expected_hash_a, actual_transmission_hash_a);
 
             let actual_rustorcli_hash_b =
                 get_hash(&format!("{}/torrent_b_data", RUSTORCLI_DIRECTORY));

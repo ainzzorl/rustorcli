@@ -572,6 +572,19 @@ fn send_bitfield(peer_id: usize, download: &mut Download) {
     send_message(s, 5, &payload).unwrap();
 }
 
+fn send_unchoke(peer_id: usize, download: &mut Download) {
+    println!(
+        "Sending unchoked to peer_id={}, download_id={}",
+        peer_id, download.entry.id
+    );
+
+    let v: &mut Vec<Option<TcpStream>> = &mut download.connections;
+    let mut o: Option<&mut TcpStream> = v[peer_id].as_mut();
+    let s: &mut TcpStream = o.as_mut().expect("Expected the stream to be present");
+
+    send_message(s, 1, &Vec::new()).unwrap();
+}
+
 fn open_missing_connections(downloads: &mut HashMap<u32, Download>, my_id: &String) {
     println!("Opening missing connections");
     for (download_id, download) in downloads {
@@ -612,6 +625,7 @@ fn open_missing_connections(downloads: &mut HashMap<u32, Download>, my_id: &Stri
                                 stream.set_nonblocking(true).unwrap();
                                 download.connections[peer_index] = Some(stream);
                                 send_bitfield(peer_index, download);
+                                send_unchoke(peer_index, download);
                             }
                             Err(e) => {
                                 println!("Handshake failure: {:?}", e);
@@ -726,7 +740,7 @@ fn process_message(message: Vec<u8>, download: &mut Download, peer_id: usize) {
         }
         6 => {
             println!("Request! peer_id={}", peer_id);
-            // TODO: do something
+            on_request(message, download, peer_id);
         }
         7 => {
             println!("Piece! peer_id={}", peer_id);
@@ -736,6 +750,36 @@ fn process_message(message: Vec<u8>, download: &mut Download, peer_id: usize) {
             println!("Unknown type! peer_id={}", peer_id);
         }
     }
+}
+
+fn on_request(message: Vec<u8>, download: &mut Download, peer_id: usize) {
+    let pieceindex = bytes_to_u32(&message[1..=4]);
+    let begin = bytes_to_u32(&message[5..=8]) as usize;
+    let length = bytes_to_u32(&message[9..=12]) as usize;
+    println!(
+        "Got request {} from peer_id={}; from {}, len={}",
+        pieceindex, peer_id, begin, length
+    );
+
+    let mut file = &download.file;
+
+    let seek_pos: u64 =
+        ((pieceindex as i64) * (download.torrent.info.piece_length as i64) + (begin as i64)) as u64;
+    file.seek(SeekFrom::Start(seek_pos)).unwrap();
+
+    let mut data = vec![];
+    file.take(length as u64).read_to_end(&mut data).unwrap();
+
+    let v: &mut Vec<Option<TcpStream>> = &mut download.connections;
+    let mut o: Option<&mut TcpStream> = v[peer_id].as_mut();
+    let s: &mut TcpStream = o.as_mut().expect("Expected the stream to be present");
+
+    let mut payload: Vec<u8> = Vec::new();
+    payload.extend(u32_to_bytes(pieceindex));
+    payload.extend(u32_to_bytes(begin as u32));
+    payload.extend(data);
+
+    send_message(s, 7, &payload).unwrap();
 }
 
 fn on_piece(message: Vec<u8>, download: &mut Download, peer_id: usize) {
