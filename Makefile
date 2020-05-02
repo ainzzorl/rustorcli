@@ -1,8 +1,12 @@
 test :
 			 cargo test -- --test-threads=1
 
-e2e :
-			 cargo test e2e -- --nocapture --ignored
+e2e-incoming :
+			 cargo test e2e_incoming -- --nocapture --ignored
+			 cargo run stop
+
+e2e-outgoing :
+			 cargo test e2e_outgoing -- --nocapture --ignored
 			 cargo run stop
 
 cleanup:
