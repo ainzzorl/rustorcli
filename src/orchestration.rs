@@ -547,6 +547,31 @@ fn find_peer_for_piece(download: &Download, piece_id: usize) -> Option<usize> {
     None
 }
 
+fn send_bitfield(peer_id: usize, download: &mut Download) {
+    println!(
+        "Sending bitfield to peer_id={}, download_id={}",
+        peer_id, download.entry.id
+    );
+
+    let num_pieces = download.have_block.len();
+
+    let mut payload: Vec<u8> = vec![0; (num_pieces as f64 / 8 as f64).ceil() as usize];
+    for have_index in 0..num_pieces {
+        let bytes_index = have_index / 8;
+        let index_into_byte = have_index % 8;
+        if has_piece(download, have_index) {
+            let mask = 1 << (7 - index_into_byte);
+            payload[bytes_index] |= mask;
+        }
+    }
+
+    let v: &mut Vec<Option<TcpStream>> = &mut download.connections;
+    let mut o: Option<&mut TcpStream> = v[peer_id].as_mut();
+    let s: &mut TcpStream = o.as_mut().expect("Expected the stream to be present");
+
+    send_message(s, 5, &payload).unwrap();
+}
+
 fn open_missing_connections(downloads: &mut HashMap<u32, Download>, my_id: &String) {
     println!("Opening missing connections");
     for (download_id, download) in downloads {
@@ -586,6 +611,7 @@ fn open_missing_connections(downloads: &mut HashMap<u32, Download>, my_id: &Stri
                             Ok(()) => {
                                 stream.set_nonblocking(true).unwrap();
                                 download.connections[peer_index] = Some(stream);
+                                send_bitfield(peer_index, download);
                             }
                             Err(e) => {
                                 println!("Handshake failure: {:?}", e);
