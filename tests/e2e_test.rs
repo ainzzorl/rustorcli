@@ -43,17 +43,25 @@ fn e2e_outgoing() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 #[ignore]
 fn e2e_incoming() -> Result<(), Box<dyn std::error::Error>> {
-    return e2e(true, true, true);
+    return e2e(true, false, true);
 }
 
-fn e2e(rustorcli_first: bool, do_download: bool, do_upload: bool) -> Result<(), Box<dyn std::error::Error>> {
-    println!("Running end-to-end test. rustorcli_first={}, do_download={}, do_upload={}", rustorcli_first, do_download, do_upload);
+fn e2e(
+    rustorcli_first: bool,
+    do_download: bool,
+    do_upload: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!(
+        "Running end-to-end test. rustorcli_first={}, do_download={}, do_upload={}",
+        rustorcli_first, do_download, do_upload
+    );
 
     println!("Killing tracker");
     Exec::shell("lsof -i tcp:8000 | awk 'NR!=1 {print $2}' | xargs kill").join()?;
 
     println!("Starting torrent tracker");
     Command::new("bittorrent-tracker")
+        .arg("--trust-proxy")
         .arg("--http")
         .arg("--port")
         .arg("8000")
@@ -80,9 +88,14 @@ fn e2e(rustorcli_first: bool, do_download: bool, do_upload: bool) -> Result<(), 
     let expected_hash_a = get_hash("./data/torrent_a_data");
     let expected_hash_b = get_hash("./data/torrent_b_data");
 
+    stop_and_clean_rustorcli()?;
+    stop_and_clean_transmission()?;
+    stop_and_clean_webtorrent()?;
+
     if rustorcli_first {
         restart_rustorcli(do_upload, do_download)?;
-        restart_transmission(do_upload, do_download)?;
+        thread::sleep(time::Duration::from_secs(3));
+        restart_webtorrent()?;
     } else {
         restart_transmission(do_upload, do_download)?;
         restart_rustorcli(do_upload, do_download)?;
@@ -108,19 +121,18 @@ fn e2e(rustorcli_first: bool, do_download: bool, do_upload: bool) -> Result<(), 
         let upload_completed = rustorcli_a_exists && transmission_a_exists;
         let download_completed = rustorcli_b_exists && transmission_b_exists;
 
-        if (upload_completed || !do_upload) && (download_completed || !do_download)
-        {
+        if (upload_completed || !do_upload) && (download_completed || !do_download) {
             println!("All completed!!");
 
             if do_upload {
                 let actual_transmission_hash_a =
-                get_hash(&format!("{}/torrent_a_data", TRANSMISSION_DIRECTORY));
+                    get_hash(&format!("{}/torrent_a_data", TRANSMISSION_DIRECTORY));
                 assert_eq!(expected_hash_a, actual_transmission_hash_a);
             }
 
             if do_download {
                 let actual_rustorcli_hash_b =
-                get_hash(&format!("{}/torrent_b_data", RUSTORCLI_DIRECTORY));
+                    get_hash(&format!("{}/torrent_b_data", RUSTORCLI_DIRECTORY));
                 assert_eq!(expected_hash_b, actual_rustorcli_hash_b);
             }
 
@@ -147,10 +159,23 @@ fn get_hash(path: &str) -> String {
     return format!("{:x}", hash);
 }
 
-fn restart_transmission(do_upload: bool, do_download: bool) -> Result<(), Box<dyn std::error::Error>> {
+fn stop_and_clean_transmission() -> Result<(), Box<dyn std::error::Error>> {
+    println!("Deleting everything from transmission");
+    Command::new("transmission-remote")
+        .arg("-t")
+        .arg("all")
+        .arg("-r")
+        .spawn()
+        .ok();
     println!("Killing transmission");
     Exec::shell("killall transmission-daemon").join()?;
+    return Ok(());
+}
 
+fn restart_transmission(
+    do_upload: bool,
+    do_download: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     println!("Starting transmission");
     Command::new("transmission-daemon")
         .arg("--download-dir")
@@ -171,23 +196,38 @@ fn restart_transmission(do_upload: bool, do_download: bool) -> Result<(), Box<dy
     println!("Adding torrents to trasmission");
     if do_upload {
         Command::new("transmission-remote")
-        .arg("-a")
-        .arg("./data/torrent_a_data.torrent")
-        .spawn()
-        .expect("Failed to add torrent A to transmission");
+            .arg("-a")
+            .arg("./data/torrent_a_data.torrent")
+            .spawn()
+            .expect("Failed to add torrent A to transmission");
     }
     if do_download {
         Command::new("transmission-remote")
-        .arg("-a")
-        .arg("./data/torrent_b_data.torrent")
-        .spawn()
-        .expect("Failed to add torrent B to transmission");
+            .arg("-a")
+            .arg("./data/torrent_b_data.torrent")
+            .spawn()
+            .expect("Failed to add torrent B to transmission");
     }
 
     return Ok(());
 }
 
-fn restart_rustorcli(do_upload: bool, do_download: bool) -> Result<(), Box<dyn std::error::Error>> {
+fn restart_webtorrent() -> Result<(), Box<dyn std::error::Error>> {
+    println!("Starting webtorrent");
+    Command::new("webtorrent")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .arg("download")
+        .arg("./data/torrent_a_data.torrent")
+        .arg("-o")
+        .arg(TRANSMISSION_DIRECTORY)
+        .spawn()
+        .expect("Failed to start webtorrent");
+    thread::sleep(time::Duration::from_secs(3));
+    return Ok(());
+}
+
+fn stop_and_clean_rustorcli() -> Result<(), Box<dyn std::error::Error>> {
     println!("Stopping rustorcli");
     Command::main_binary()?.arg("stop").assert().success();
 
@@ -195,30 +235,44 @@ fn restart_rustorcli(do_upload: bool, do_download: bool) -> Result<(), Box<dyn s
     let config_directory = torrent_entries::config_directory();
     std::fs::remove_dir_all(config_directory).ok();
 
+    return Ok(());
+}
+
+fn stop_and_clean_webtorrent() -> Result<(), Box<dyn std::error::Error>> {
+    println!("Stopping webtorrent");
+    Exec::shell("killall WebTorrent").join()?;
+    return Ok(());
+}
+
+fn restart_rustorcli(do_upload: bool, do_download: bool) -> Result<(), Box<dyn std::error::Error>> {
     println!("Adding torrents to rustorcli");
     if do_upload {
         Command::main_binary()?
-        .arg("add")
-        .arg("-t")
-        .arg(get_absolute("./data/torrent_a_data.torrent"))
-        .arg("-d")
-        .arg(get_absolute(RUSTORCLI_DIRECTORY))
-        .assert()
-        .success();
+            .arg("add")
+            .arg("-t")
+            .arg(get_absolute("./data/torrent_a_data.torrent"))
+            .arg("-d")
+            .arg(get_absolute(RUSTORCLI_DIRECTORY))
+            .assert()
+            .success();
     }
     if do_download {
         Command::main_binary()?
-        .arg("add")
-        .arg("-t")
-        .arg(get_absolute("./data/torrent_b_data.torrent"))
-        .arg("-d")
-        .arg(get_absolute(RUSTORCLI_DIRECTORY))
-        .assert()
-        .success();
+            .arg("add")
+            .arg("-t")
+            .arg(get_absolute("./data/torrent_b_data.torrent"))
+            .arg("-d")
+            .arg(get_absolute(RUSTORCLI_DIRECTORY))
+            .assert()
+            .success();
     }
 
     println!("Starting rustorcli");
-    Command::main_binary()?.arg("start").assert().success();
+    Command::main_binary()?
+        .arg("start")
+        .arg("--local")
+        .assert()
+        .success();
 
     return Ok(());
 }

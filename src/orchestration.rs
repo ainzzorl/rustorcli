@@ -15,6 +15,8 @@ use serde_bytes::ByteBuf;
 
 use std::{thread, time};
 
+use std::thread::JoinHandle;
+
 use rustorcli::torrent_entries;
 
 use serde_bencode::de;
@@ -35,7 +37,7 @@ use std::convert::TryInto;
 
 use std::collections::VecDeque;
 
-use std::net::TcpStream;
+use std::net::{TcpListener, TcpStream};
 
 use std::net::SocketAddr;
 
@@ -146,6 +148,7 @@ fn reload_config(
     downloads: &mut HashMap<u32, Download>,
     my_id: &String,
     queue: &mut VecDeque<QueueEntry>,
+    is_local: bool,
 ) {
     let entries = torrent_entries::list_torrents();
     println!("Reloading config. Entries: {}", entries.len());
@@ -153,7 +156,7 @@ fn reload_config(
         if !downloads.contains_key(&entry.id) {
             println!("Adding entry, id={}", entry.id);
 
-            let download = to_download(&entry, my_id);
+            let download = to_download(&entry, my_id, is_local);
 
             for piece_id in 0..download.torrent.info.piece_infos.len() {
                 if !has_piece(&download, piece_id) {
@@ -229,9 +232,9 @@ fn get_have(download: &mut Download) -> Vec<Vec<bool>> {
     return have;
 }
 
-fn to_download(entry: &torrent_entries::TorrentEntry, my_id: &String) -> Download {
+fn to_download(entry: &torrent_entries::TorrentEntry, my_id: &String, is_local: bool) -> Download {
     let torrent = read_torrent(&(entry.torrent_path));
-    let announcement = get_announcement(&torrent, &my_id).unwrap();
+    let announcement = get_announcement(&torrent, &my_id, is_local).unwrap();
 
     let num_peers = announcement.peers.len();
     let mut connections: Vec<Option<TcpStream>> = Vec::new();
@@ -353,16 +356,18 @@ fn info_hash(data: &[u8]) -> Result<Vec<u8>, Error> {
     }
 }
 
-pub fn start() {
+pub fn start(is_local: bool) {
     println!("Starting orchestration");
+    // TODO: consistent id
+    // TODO: encode client name
     let my_id: String = thread_rng().sample_iter(&Alphanumeric).take(20).collect();
     println!("My id: {}", my_id);
 
     let mut downloads: HashMap<u32, Download> = HashMap::new();
-    main_loop(&mut downloads, &my_id);
+    main_loop(&mut downloads, &my_id, is_local);
 }
 
-fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String) {
+fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: bool) {
     // TODO: extract this to some method
     // let (tx, rx) = channel();
     // let mut watcher: RecommendedWatcher = Watcher::new(tx, Duration::from_secs(2)).unwrap();
@@ -373,7 +378,9 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String) {
 
     let mut queue = VecDeque::new();
 
-    reload_config(downloads, &my_id, &mut queue);
+    reload_config(downloads, &my_id, &mut queue, is_local);
+
+    start_listeners(6881);
 
     let mut iteration = 0;
     let mut last_missing_reopen = 0;
@@ -397,7 +404,7 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String) {
         // }
         if iteration % 100 == 0 {
             println!("Reloading config on iteration {}", iteration);
-            reload_config(downloads, &my_id, &mut queue);
+            reload_config(downloads, &my_id, &mut queue, is_local);
         }
 
         let now = SystemTime::now()
@@ -809,6 +816,32 @@ fn on_piece(message: Vec<u8>, download: &mut Download, peer_id: usize) {
     check_if_done(download);
 }
 
+pub fn start_listeners(port: u16) -> JoinHandle<()> {
+    println!("Starting to listen on port {}", port);
+    let tcp_listener = TcpListener::bind(format!("0.0.0.0:{}", port)).unwrap();
+    let listen_addr = tcp_listener.local_addr().unwrap();
+    println!("### Listener started on {}", listen_addr);
+    thread::spawn(move || {
+        for stream in tcp_listener.incoming() {
+            println!("### Incoming connection pre match!");
+            match stream {
+                Ok(s) => handle_incoming_connection(s),
+                Err(e) => println!("Error: {:?}", e),
+            }
+        }
+    })
+}
+
+fn handle_incoming_connection(stream: TcpStream) {
+    println!("### Incoming connection!");
+    // thread::spawn(move || {
+    //     match peer_connection::accept(stream, download_mutex) {
+    //         Ok(_) => println!("Peer done"),
+    //         Err(e) => println!("Error: {:?}", e)
+    //     }
+    // });
+}
+
 fn check_if_piece_done(download: &mut Download, piece_id: usize) {
     for b in &download.have_block[piece_id] {
         if !b {
@@ -896,7 +929,11 @@ fn on_done(download: &Download) {
     fs::rename(&download.temp_location, dest).unwrap();
 }
 
-fn get_announcement(torrent: &Torrent, peer_id: &String) -> Result<Announcement, Error> {
+fn get_announcement(
+    torrent: &Torrent,
+    peer_id: &String,
+    is_local: bool,
+) -> Result<Announcement, Error> {
     let client = reqwest::Client::new();
     let info_hash = &torrent.info_hash;
     let urlencodedih: String = info_hash
@@ -904,22 +941,23 @@ fn get_announcement(torrent: &Torrent, peer_id: &String) -> Result<Announcement,
         .map(|byte| percent_encode_byte(*byte))
         .collect();
 
-    let request = client
-        .get(&torrent.announce)
-        .query(&[
-            ("peer_id", peer_id.clone()),
-            ("uploaded", "0".to_string()),
-            ("downloaded", "0".to_string()),
-            ("port", "6881".to_string()),
-            ("left", "0".to_string()),
-        ])
-        .build()
-        .unwrap();
+    let query = [
+        ("peer_id", peer_id.clone()),
+        ("uploaded", "0".to_string()),
+        ("downloaded", "0".to_string()),
+        ("port", "6881".to_string()),
+        ("left", "0".to_string()),
+    ];
+    let request = client.get(&torrent.announce).query(&query).build().unwrap();
+
     let url = request.url();
     let url = format!("{}&info_hash={}", url, urlencodedih);
     println!("Announcement URL: {}", url);
 
-    let mut response = client.get(&url).send()?;
+    let mut response = client
+        .get(&url)
+        .header("x-forwarded-for", "127.0.0.1")
+        .send()?;
     let mut buffer: Vec<u8> = vec![];
     response.copy_to(&mut buffer)?;
 
@@ -979,6 +1017,10 @@ fn get_announcement(torrent: &Torrent, peer_id: &String) -> Result<Announcement,
     }
 
     println!("Num peers: {}", announcement.peers.len());
+
+    for peer in &announcement.peers {
+        println!("Peer - {}:{}", peer.ip, peer.port);
+    }
 
     return Ok(announcement);
 }

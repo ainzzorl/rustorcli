@@ -25,7 +25,14 @@ fn main() -> () {
         .version("0.1")
         .author("ainzzorl <ainzzorl@gmail.com>")
         .about("BitTorrent client")
-        .subcommand(SubCommand::with_name("start").about("starts the app"))
+        .subcommand(
+            SubCommand::with_name("start").about("starts the app").arg(
+                Arg::with_name("local")
+                    .short("l")
+                    .long("local")
+                    .help("start in local mode"),
+            ),
+        )
         .subcommand(SubCommand::with_name("stop").about("stops the app"))
         .subcommand(SubCommand::with_name("list").about("lists downloads"))
         .subcommand(
@@ -62,7 +69,9 @@ fn main() -> () {
 
     match matches.subcommand() {
         ("start", _) => {
-            start(pid_opt);
+            let subcommand_mathes = matches.subcommand_matches("start").unwrap();
+            let is_local = subcommand_mathes.is_present("local");
+            start(pid_opt, is_local);
         }
         ("stop", _) => {
             stop(pid_opt);
@@ -87,7 +96,7 @@ fn main() -> () {
     }
 }
 
-fn start(pid_opt: Option<i32>) {
+fn start(pid_opt: Option<i32>, is_local: bool) {
     match pid_opt {
         Some(pid) => {
             let sys = sysinfo::System::new_all();
@@ -118,13 +127,13 @@ fn start(pid_opt: Option<i32>) {
         .privileged_action(|| "Executed before drop privileges");
 
     match daemonize.start() {
-        Ok(_) => run(),
+        Ok(_) => run(is_local),
         Err(e) => eprintln!("Error, {}", e),
     }
 }
 
-fn run() {
-    orchestration::start();
+fn run(is_local: bool) {
+    orchestration::start(is_local);
 }
 
 fn stop(pid_opt: Option<i32>) {
