@@ -367,27 +367,56 @@ pub fn start(is_local: bool) {
     main_loop(&mut downloads, &my_id, is_local);
 }
 
-fn receive_incoming_connections(tcp_listener: &mut TcpListener) {
+fn receive_incoming_connections(
+    tcp_listener: &mut TcpListener,
+    my_id: &String,
+    downloads: &mut HashMap<u32, Download>,
+) {
     println!("Receiving incoming connections");
 
-    for stream in tcp_listener.incoming() {
-        match stream {
-            Ok(s) => handle_incoming_connection(s),
-            Err(_e) => {
-                // Do nothing
-            }
+    match tcp_listener.accept() {
+        Ok((s, _addr)) => handle_incoming_connection(s, my_id, downloads),
+        Err(_e) => {
+            // Do nothing
         }
     }
 }
 
-fn handle_incoming_connection(stream: TcpStream) {
-    println!("### Incoming connection!");
-    // thread::spawn(move || {
-    //     match peer_connection::accept(stream, download_mutex) {
-    //         Ok(_) => println!("Peer done"),
-    //         Err(e) => println!("Error: {:?}", e)
-    //     }
-    // });
+fn handle_incoming_connection(
+    stream: TcpStream,
+    my_id: &String,
+    downloads: &mut HashMap<u32, Download>,
+) {
+    let mut s = stream;
+    println!("Incoming connection!");
+    match handshake_incoming(&mut s, my_id) {
+        Ok(info_hash) => {
+            println!("Successful incoming handshake!!!");
+
+            let mut found = false;
+            for (download_id, download) in downloads {
+                let d_info_hash = &download.torrent.info_hash;
+                if *d_info_hash == info_hash {
+                    println!("Found corresponding download, download_id={}", download_id);
+                    found = true;
+                    s.set_nonblocking(true).unwrap();
+                    download.connections.push(Some(s));
+                    let peer_index = download.connections.len() - 1;
+                    send_bitfield(peer_index, download);
+                    send_unchoke(peer_index, download);
+                    println!("Done adding the connection to download");
+                    break;
+                }
+            }
+
+            if !found {
+                println!("Did not find corresponding download!");
+            }
+        }
+        Err(e) => {
+            println!("Handshake failure: {:?}", e);
+        }
+    }
 }
 
 fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: bool) {
@@ -430,7 +459,7 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: b
             reload_config(downloads, &my_id, &mut queue, is_local);
         }
 
-        receive_incoming_connections(&mut tcp_listener);
+        receive_incoming_connections(&mut tcp_listener, my_id, downloads);
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -846,7 +875,7 @@ pub fn start_listeners(port: u16) -> TcpListener {
     let tcp_listener = TcpListener::bind(format!("0.0.0.0:{}", port)).unwrap();
     tcp_listener.set_nonblocking(true);
     let listen_addr = tcp_listener.local_addr().unwrap();
-    println!("### Listener started on {}", listen_addr);
+    println!("Listener started on {}", listen_addr);
     return tcp_listener;
 }
 
@@ -1078,6 +1107,30 @@ fn handshake(
     }
     println!("Completed handshake!");
     return Ok(());
+}
+
+fn handshake_incoming(stream: &mut TcpStream, my_id: &String) -> Result<Vec<u8>, std::io::Error> {
+    println!("Starting handshake...");
+
+    let pstrlen = read_n(stream, 1, true)?;
+    read_n(stream, pstrlen[0] as u32, true)?;
+
+    read_n(stream, 8, true)?;
+    let in_info_hash = read_n(stream, 20, true)?;
+    let in_peer_id = read_n(stream, 20, true)?;
+
+    let mut to_write: Vec<u8> = Vec::new();
+    to_write.push(19 as u8);
+    to_write.extend("BitTorrent protocol".bytes());
+    to_write.extend(vec![0; 8].into_iter());
+
+    to_write.extend(in_info_hash.iter().cloned());
+    to_write.extend(my_id.bytes());
+
+    let warr: &[u8] = &to_write; // c: &[u8]
+    stream.write_all(warr)?;
+
+    return Ok(in_info_hash);
 }
 
 fn read_n(

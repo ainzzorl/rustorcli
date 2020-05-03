@@ -127,6 +127,11 @@ fn e2e(
             if do_upload {
                 let actual_transmission_hash_a =
                     get_hash(&format!("{}/torrent_a_data", TRANSMISSION_DIRECTORY));
+                println!(
+                    "Actual transmission hash: {} from {}",
+                    actual_transmission_hash_a,
+                    format!("{}/torrent_a_data", TRANSMISSION_DIRECTORY)
+                );
                 assert_eq!(expected_hash_a, actual_transmission_hash_a);
             }
 
