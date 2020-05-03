@@ -11,8 +11,9 @@ e2e-outgoing :
 
 cleanup:
 			 cargo run stop
-			 killall transmission-daemon
-			 killall WebTorrent
+			 killall transmission-daemon || true
+			 killall WebTorrent || true
+			 killall rustorcli || true
 			 rm -rf target/tmp/
 			 # TODO: other OS
 			 rm -rf "$$HOME/Library/Application Support/rustorcli/"
