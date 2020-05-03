@@ -18,6 +18,8 @@ cleanup:
 			 # TODO: other OS
 			 rm -rf "$$HOME/Library/Application Support/rustorcli/"
 
+test-all: test e2e-incoming e2e-outgoing cleanup
+
 run-current:
 			 mkdir -p target/tmp/current
 			 cargo run stop
