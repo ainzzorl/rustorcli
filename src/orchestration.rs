@@ -367,6 +367,29 @@ pub fn start(is_local: bool) {
     main_loop(&mut downloads, &my_id, is_local);
 }
 
+fn receive_incoming_connections(tcp_listener: &mut TcpListener) {
+    println!("Receiving incoming connections");
+
+    for stream in tcp_listener.incoming() {
+        match stream {
+            Ok(s) => handle_incoming_connection(s),
+            Err(_e) => {
+                // Do nothing
+            }
+        }
+    }
+}
+
+fn handle_incoming_connection(stream: TcpStream) {
+    println!("### Incoming connection!");
+    // thread::spawn(move || {
+    //     match peer_connection::accept(stream, download_mutex) {
+    //         Ok(_) => println!("Peer done"),
+    //         Err(e) => println!("Error: {:?}", e)
+    //     }
+    // });
+}
+
 fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: bool) {
     // TODO: extract this to some method
     // let (tx, rx) = channel();
@@ -380,7 +403,7 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: b
 
     reload_config(downloads, &my_id, &mut queue, is_local);
 
-    start_listeners(6881);
+    let mut tcp_listener = start_listeners(6881);
 
     let mut iteration = 0;
     let mut last_missing_reopen = 0;
@@ -406,6 +429,8 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: b
             println!("Reloading config on iteration {}", iteration);
             reload_config(downloads, &my_id, &mut queue, is_local);
         }
+
+        receive_incoming_connections(&mut tcp_listener);
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -816,30 +841,13 @@ fn on_piece(message: Vec<u8>, download: &mut Download, peer_id: usize) {
     check_if_done(download);
 }
 
-pub fn start_listeners(port: u16) -> JoinHandle<()> {
+pub fn start_listeners(port: u16) -> TcpListener {
     println!("Starting to listen on port {}", port);
     let tcp_listener = TcpListener::bind(format!("0.0.0.0:{}", port)).unwrap();
+    tcp_listener.set_nonblocking(true);
     let listen_addr = tcp_listener.local_addr().unwrap();
     println!("### Listener started on {}", listen_addr);
-    thread::spawn(move || {
-        for stream in tcp_listener.incoming() {
-            println!("### Incoming connection pre match!");
-            match stream {
-                Ok(s) => handle_incoming_connection(s),
-                Err(e) => println!("Error: {:?}", e),
-            }
-        }
-    })
-}
-
-fn handle_incoming_connection(stream: TcpStream) {
-    println!("### Incoming connection!");
-    // thread::spawn(move || {
-    //     match peer_connection::accept(stream, download_mutex) {
-    //         Ok(_) => println!("Peer done"),
-    //         Err(e) => println!("Error: {:?}", e)
-    //     }
-    // });
+    return tcp_listener;
 }
 
 fn check_if_piece_done(download: &mut Download, piece_id: usize) {
