@@ -17,8 +17,6 @@ use std::{thread, time};
 
 use std::thread::JoinHandle;
 
-use rustorcli::torrent_entries;
-
 use serde_bencode::de;
 use std::fs;
 use std::fs::File;
@@ -58,6 +56,10 @@ use std::path::Path;
 
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
+
+use crate::io_primitives::read_n;
+use crate::outgoing_connections::*;
+use crate::torrent_entries;
 
 pub struct Download {
     entry: torrent_entries::TorrentEntry,
@@ -465,6 +467,7 @@ fn request_connections(
     }
 }
 
+// TODO: consider moving to outgoing_connections
 fn process_new_connections(
     downloads: &mut HashMap<u32, Download>,
     inx: &Receiver<OpenConnectionResponse>,
@@ -737,68 +740,6 @@ fn send_unchoke(peer_id: usize, download: &mut Download) {
     let s: &mut TcpStream = o.as_mut().expect("Expected the stream to be present");
 
     send_message(s, 1, &Vec::new()).unwrap();
-}
-
-struct OpenConnectionRequest {
-    ip: String,
-    port: u64,
-    my_id: String,
-    info_hash: Vec<u8>,
-    download_id: usize,
-    peer_id: usize,
-}
-
-struct OpenConnectionResponseBody {
-    stream: TcpStream,
-    download_id: usize,
-    peer_id: usize,
-}
-
-type OpenConnectionResponse = Result<OpenConnectionResponseBody, Error>;
-
-fn open_missing_connections(
-    inx: Receiver<OpenConnectionRequest>,
-    outx: Sender<OpenConnectionResponse>,
-) {
-    println!("In open_missing_connections");
-
-    loop {
-        let request = inx.recv().expect("Expected to receive a request");
-        let ip = if request.ip == "::1" {
-            String::from("127.0.0.1")
-        } else {
-            request.ip.clone()
-        }; // TODO: remove this
-
-        let address = format!("{}:{}", ip, request.port);
-        println!("Trying to open missing connection; address={}", address);
-        let socket_address: SocketAddr = address.parse().expect("Unable to parse socket address");
-
-        match TcpStream::connect_timeout(&socket_address, Duration::from_secs(1)) {
-            Ok(mut stream) => {
-                println!("Connected to the peer!");
-                match handshake(&mut stream, &request.info_hash, &request.my_id) {
-                    Ok(()) => {
-                        stream.set_nonblocking(true).unwrap();
-                        outx.send(Ok(OpenConnectionResponseBody {
-                            stream: stream,
-                            download_id: request.download_id,
-                            peer_id: request.peer_id,
-                        }))
-                        .unwrap();
-                    }
-                    Err(e) => {
-                        println!("Handshake failure: {:?}", e);
-                        outx.send(Err(Error::from(e))).unwrap();
-                    }
-                }
-            }
-            Err(e) => {
-                println!("Could not connect to peer: {:?}", e);
-                outx.send(Err(Error::from(e))).unwrap();
-            }
-        }
-    }
 }
 
 fn receive_messages(downloads: &mut HashMap<u32, Download>) {
@@ -1170,44 +1111,6 @@ fn show(bs: &Vec<u8>) -> String {
     visible
 }
 
-fn handshake(
-    stream: &mut TcpStream,
-    info_hash: &Vec<u8>,
-    my_id: &String,
-) -> Result<(), std::io::Error> {
-    println!("Starting handshake...");
-    let mut to_write: Vec<u8> = Vec::new();
-    to_write.push(19 as u8);
-    to_write.extend("BitTorrent protocol".bytes());
-    to_write.extend(vec![0; 8].into_iter());
-
-    to_write.extend(info_hash.iter().cloned());
-    to_write.extend(my_id.bytes());
-
-    let warr: &[u8] = &to_write; // c: &[u8]
-    stream.write_all(warr)?;
-
-    let pstrlen = read_n(stream, 1, true)?;
-    read_n(stream, pstrlen[0] as u32, true)?;
-
-    read_n(stream, 8, true)?;
-    let in_info_hash = read_n(stream, 20, true)?;
-    let in_peer_id = read_n(stream, 20, true)?;
-
-    // validate info hash
-    if in_info_hash != *info_hash {
-        println!("Invalid info hash");
-    }
-
-    let peer_id_vec: Vec<u8> = my_id.bytes().collect();
-    if in_peer_id == peer_id_vec {
-        // TODO: do something about it!
-        println!("Invalid peer id");
-    }
-    println!("Completed handshake!");
-    return Ok(());
-}
-
 fn handshake_incoming(stream: &mut TcpStream, my_id: &String) -> Result<Vec<u8>, std::io::Error> {
     println!("Starting handshake...");
 
@@ -1230,47 +1133,6 @@ fn handshake_incoming(stream: &mut TcpStream, my_id: &String) -> Result<Vec<u8>,
     stream.write_all(warr)?;
 
     return Ok(in_info_hash);
-}
-
-fn read_n(
-    stream: &TcpStream,
-    bytes_to_read: u32,
-    blocking: bool,
-) -> Result<Vec<u8>, std::io::Error> {
-    let mut buf = vec![];
-    read_n_to_buf(stream, &mut buf, bytes_to_read, blocking)?;
-    Ok(buf)
-}
-
-fn read_n_to_buf(
-    stream: &TcpStream,
-    buf: &mut Vec<u8>,
-    bytes_to_read: u32,
-    blocking: bool,
-) -> Result<(), std::io::Error> {
-    if bytes_to_read == 0 {
-        return Ok(());
-    }
-
-    if blocking {
-        stream.set_nonblocking(false).unwrap();
-        let bytes_read = stream.take(bytes_to_read as u64).read_to_end(buf);
-        match bytes_read {
-            Ok(0) => return Err(std::io::Error::new(io::ErrorKind::Other, "Read 0 bytes!")),
-            Ok(n) if n == bytes_to_read as usize => Ok(()),
-            Ok(n) => read_n_to_buf(stream, buf, bytes_to_read - n as u32, blocking),
-            Err(e) => return Err(std::io::Error::new(io::ErrorKind::Other, e)),
-        }
-    } else {
-        stream.set_nonblocking(true).unwrap();
-        let bytes_read = stream.take(bytes_to_read as u64).read_to_end(buf);
-        match bytes_read {
-            Ok(0) => return Err(std::io::Error::new(io::ErrorKind::Other, "Read 0 bytes!")),
-            Ok(n) if n == bytes_to_read as usize => Ok(()),
-            Ok(n) => read_n_to_buf(stream, buf, bytes_to_read - n as u32, blocking),
-            Err(e) => return Err(std::io::Error::new(io::ErrorKind::WouldBlock, e)),
-        }
-    }
 }
 
 const BYTE_0: u32 = 256 * 256 * 256;

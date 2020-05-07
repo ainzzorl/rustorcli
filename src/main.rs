@@ -4,7 +4,10 @@ extern crate serde_derive;
 extern crate daemonize;
 extern crate sysinfo;
 
+pub mod handshake;
+pub mod io_primitives;
 pub mod orchestration;
+pub mod outgoing_connections;
 pub mod torrent_entries;
 
 use clap::{App, Arg, SubCommand};
