@@ -56,6 +56,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use std::path::Path;
 
+use std::sync::mpsc;
+use std::sync::mpsc::{Receiver, Sender};
+
 pub struct Download {
     entry: torrent_entries::TorrentEntry,
     torrent: Torrent,
@@ -419,6 +422,86 @@ fn handle_incoming_connection(
     }
 }
 
+fn request_connections(
+    downloads: &mut HashMap<u32, Download>,
+    my_id: &String,
+    outx: Sender<OpenConnectionRequest>,
+) {
+    for (download_id, download) in downloads {
+        for peer_index in 0..download.connections.len() {
+            if download
+                .connections
+                .get(peer_index)
+                .expect("expected connection to be in the vec")
+                .is_none()
+            {
+                let peer = download
+                    .announcement
+                    .peers
+                    .get(peer_index)
+                    .expect("Expected peer to be in the list");
+
+                if peer.port == 6881 {
+                    // Don't connect to self.
+                    // TODO: use id instead.
+                    continue;
+                }
+
+                println!(
+                    "Requesting connection through the channel. peer_id={}, download_id={}",
+                    peer_index, download_id
+                );
+                outx.send(OpenConnectionRequest {
+                    ip: peer.ip.clone(),
+                    port: peer.port.clone(),
+                    my_id: my_id.clone(),
+                    peer_id: peer_index,
+                    download_id: *download_id as usize,
+                    info_hash: download.torrent.info_hash.clone(),
+                })
+                .expect("Expected send to succeed");
+            }
+        }
+    }
+}
+
+fn process_new_connections(
+    downloads: &mut HashMap<u32, Download>,
+    inx: &Receiver<OpenConnectionResponse>,
+) {
+    println!("Processing established connections");
+
+    loop {
+        match inx.try_recv() {
+            Ok(response_res) => {
+                match response_res {
+                    Ok(response) => {
+                        println!(
+                            "Received established connection. download_id={}, peer_id={}",
+                            response.download_id, response.peer_id
+                        );
+                        let stream = response.stream;
+                        stream.set_nonblocking(true).unwrap();
+                        let download = downloads
+                            .get_mut(&(response.download_id as u32))
+                            .expect("Download must exist");
+                        download.connections[response.peer_id] = Some(stream);
+                        send_bitfield(response.peer_id, download);
+                        send_unchoke(response.peer_id, download);
+                    }
+                    Err(e) => {
+                        // TODO: message should include details!
+                        println!("Failed to establish connection, {:?}", e);
+                    }
+                }
+            }
+            Err(_) => {
+                break;
+            }
+        }
+    }
+}
+
 fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: bool) {
     // TODO: extract this to some method
     // let (tx, rx) = channel();
@@ -435,7 +518,25 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: b
     let mut tcp_listener = start_listeners(6881);
 
     let mut iteration = 0;
-    let mut last_missing_reopen = 0;
+
+    let (open_connections_request_sender, open_connections_request_receiver): (
+        Sender<OpenConnectionRequest>,
+        Receiver<OpenConnectionRequest>,
+    ) = mpsc::channel();
+    let (open_connections_response_sender, open_connections_response_receiver): (
+        Sender<OpenConnectionResponse>,
+        Receiver<OpenConnectionResponse>,
+    ) = mpsc::channel();
+
+    // TODO: periodically open missing connections
+    thread::spawn(move || {
+        open_missing_connections(
+            open_connections_request_receiver,
+            open_connections_response_sender,
+        );
+    });
+    request_connections(downloads, &my_id, open_connections_request_sender);
+
     loop {
         println!("Main loop iteration #{}", iteration);
         println!("Entries in the queue: {}", queue.len());
@@ -459,16 +560,8 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: b
             reload_config(downloads, &my_id, &mut queue, is_local);
         }
 
+        process_new_connections(downloads, &open_connections_response_receiver);
         receive_incoming_connections(&mut tcp_listener, my_id, downloads);
-
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards")
-            .as_millis();
-        if now - last_missing_reopen >= 60000 {
-            open_missing_connections(downloads, my_id);
-            last_missing_reopen = now;
-        }
         receive_messages(downloads);
 
         match queue.pop_front() {
@@ -646,57 +739,63 @@ fn send_unchoke(peer_id: usize, download: &mut Download) {
     send_message(s, 1, &Vec::new()).unwrap();
 }
 
-fn open_missing_connections(downloads: &mut HashMap<u32, Download>, my_id: &String) {
-    println!("Opening missing connections");
-    for (download_id, download) in downloads {
-        for peer_index in 0..download.connections.len() {
-            if download
-                .connections
-                .get(peer_index)
-                .expect("expected connection to be in the vec")
-                .is_none()
-            {
-                let peer = download
-                    .announcement
-                    .peers
-                    .get(peer_index)
-                    .expect("Expected peer to be in the list");
-                let ip = if peer.ip == "::1" {
-                    String::from("127.0.0.1")
-                } else {
-                    peer.ip.clone()
-                }; // TODO: remove this
-                if peer.port == 6881 {
-                    // Don't connect to self.
-                    // TODO: remove this
-                    continue;
-                }
-                let address = format!("{}:{}", ip, peer.port);
-                println!(
-                    "Trying to open missing connection; download_id={}, peer_id={}, address={}, peer_id={}",
-                    download_id, peer_index, address, peer_index
-                );
-                let socket_address: SocketAddr =
-                    address.parse().expect("Unable to parse socket address");
-                match TcpStream::connect_timeout(&socket_address, Duration::from_secs(1)) {
-                    Ok(mut stream) => {
-                        println!("Connected to the peer!");
-                        match handshake(&mut stream, &download.torrent.info_hash, my_id) {
-                            Ok(()) => {
-                                stream.set_nonblocking(true).unwrap();
-                                download.connections[peer_index] = Some(stream);
-                                send_bitfield(peer_index, download);
-                                send_unchoke(peer_index, download);
-                            }
-                            Err(e) => {
-                                println!("Handshake failure: {:?}", e);
-                            }
-                        }
+struct OpenConnectionRequest {
+    ip: String,
+    port: u64,
+    my_id: String,
+    info_hash: Vec<u8>,
+    download_id: usize,
+    peer_id: usize,
+}
+
+struct OpenConnectionResponseBody {
+    stream: TcpStream,
+    download_id: usize,
+    peer_id: usize,
+}
+
+type OpenConnectionResponse = Result<OpenConnectionResponseBody, Error>;
+
+fn open_missing_connections(
+    inx: Receiver<OpenConnectionRequest>,
+    outx: Sender<OpenConnectionResponse>,
+) {
+    println!("In open_missing_connections");
+
+    loop {
+        let request = inx.recv().expect("Expected to receive a request");
+        let ip = if request.ip == "::1" {
+            String::from("127.0.0.1")
+        } else {
+            request.ip.clone()
+        }; // TODO: remove this
+
+        let address = format!("{}:{}", ip, request.port);
+        println!("Trying to open missing connection; address={}", address);
+        let socket_address: SocketAddr = address.parse().expect("Unable to parse socket address");
+
+        match TcpStream::connect_timeout(&socket_address, Duration::from_secs(1)) {
+            Ok(mut stream) => {
+                println!("Connected to the peer!");
+                match handshake(&mut stream, &request.info_hash, &request.my_id) {
+                    Ok(()) => {
+                        stream.set_nonblocking(true).unwrap();
+                        outx.send(Ok(OpenConnectionResponseBody {
+                            stream: stream,
+                            download_id: request.download_id,
+                            peer_id: request.peer_id,
+                        }))
+                        .unwrap();
                     }
                     Err(e) => {
-                        println!("Could not connect to peer: {:?}", e);
+                        println!("Handshake failure: {:?}", e);
+                        outx.send(Err(Error::from(e))).unwrap();
                     }
                 }
+            }
+            Err(e) => {
+                println!("Could not connect to peer: {:?}", e);
+                outx.send(Err(Error::from(e))).unwrap();
             }
         }
     }
