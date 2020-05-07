@@ -1,5 +1,3 @@
-extern crate notify;
-
 use std::collections::HashMap;
 
 extern crate serde;
