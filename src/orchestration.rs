@@ -1,9 +1,5 @@
 extern crate notify;
 
-use notify::{RecommendedWatcher, RecursiveMode, Watcher};
-use std::sync::mpsc::channel;
-use std::time::Duration;
-
 use std::collections::HashMap;
 
 extern crate serde;
@@ -14,8 +10,6 @@ use rand::{thread_rng, Rng};
 use serde_bytes::ByteBuf;
 
 use std::{thread, time};
-
-use std::thread::JoinHandle;
 
 use serde_bencode::de;
 use std::fs;
@@ -37,8 +31,6 @@ use std::collections::VecDeque;
 
 use std::net::{TcpListener, TcpStream};
 
-use std::net::SocketAddr;
-
 use std::io::Seek;
 use std::io::SeekFrom;
 
@@ -50,16 +42,14 @@ extern crate hex;
 
 use self::crypto::digest::Digest;
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use std::path::Path;
 
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 
 use crate::io_primitives::read_n;
-use crate::outgoing_connections::*;
 use crate::torrent_entries;
+use crate::outgoing_connections::*;
 
 pub struct Download {
     entry: torrent_entries::TorrentEntry,
@@ -69,7 +59,6 @@ pub struct Download {
     we_interested: Vec<bool>,
     we_choked: Vec<bool>,
     temp_location: String,
-    final_location: String,
     file: File,
     have_block: Vec<Vec<bool>>,
 }
@@ -301,7 +290,6 @@ fn to_download(entry: &torrent_entries::TorrentEntry, my_id: &String, is_local: 
         we_interested: we_interested,
         we_choked: we_choked,
         temp_location: temp_location,
-        final_location: final_location,
         file: file,
         have_block: Vec::new(),
     };
@@ -682,7 +670,7 @@ fn request_piece(
     return Ok(());
 }
 
-fn find_peer_for_piece(download: &Download, piece_id: usize) -> Option<usize> {
+fn find_peer_for_piece(download: &Download, _piece_id: usize) -> Option<usize> {
     let mut no_connection = 0;
     let mut choked = 0;
     for peer_index in 0..download.announcement.peers.len() {
@@ -913,7 +901,7 @@ fn on_piece(message: Vec<u8>, download: &mut Download, peer_id: usize) {
 pub fn start_listeners(port: u16) -> TcpListener {
     println!("Starting to listen on port {}", port);
     let tcp_listener = TcpListener::bind(format!("0.0.0.0:{}", port)).unwrap();
-    tcp_listener.set_nonblocking(true);
+    tcp_listener.set_nonblocking(true).unwrap();
     let listen_addr = tcp_listener.local_addr().unwrap();
     println!("Listener started on {}", listen_addr);
     return tcp_listener;
@@ -1031,10 +1019,11 @@ fn get_announcement(
     let url = format!("{}&info_hash={}", url, urlencodedih);
     println!("Announcement URL: {}", url);
 
-    let mut response = client
-        .get(&url)
-        .header("x-forwarded-for", "127.0.0.1")
-        .send()?;
+    let mut req_builder = client.get(&url);
+    if is_local {
+        req_builder = req_builder.header("x-forwarded-for", "127.0.0.1");
+    }
+    let mut response = req_builder.send()?;
     let mut buffer: Vec<u8> = vec![];
     response.copy_to(&mut buffer)?;
 
@@ -1119,7 +1108,7 @@ fn handshake_incoming(stream: &mut TcpStream, my_id: &String) -> Result<Vec<u8>,
 
     read_n(stream, 8, true)?;
     let in_info_hash = read_n(stream, 20, true)?;
-    let in_peer_id = read_n(stream, 20, true)?;
+    let _in_peer_id = read_n(stream, 20, true)?;
 
     let mut to_write: Vec<u8> = Vec::new();
     to_write.push(19 as u8);
