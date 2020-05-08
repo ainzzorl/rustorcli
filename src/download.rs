@@ -12,6 +12,8 @@ use std::fs::File;
 use std::net::TcpStream;
 use std::path::Path;
 
+use std::cmp::min;
+
 use std::io::Read;
 use std::io::Seek;
 use std::io::SeekFrom;
@@ -39,16 +41,28 @@ pub struct Download {
 
     pub temp_location: String,
     pub file: File,
-    pub have_block: Vec<Vec<bool>>,
 
     peers: Vec<Peer>,
 
-    pub piece_infos: Vec<PieceInfo>,
     pub piece_length: i64,
     pub length: i64,
-    pub pieces: ByteBuf,
+    pieces: Vec<Piece>,
 
     pub info_hash: Vec<u8>,
+}
+
+pub struct Piece {
+    downloaded: bool,
+    pub sha: Vec<u8>,
+    blocks: Vec<Block>,
+    offset: u32,
+    len: u32,
+}
+
+pub struct Block {
+    downloaded: bool,
+    _offset: u64,
+    _len: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -102,7 +116,7 @@ impl Download {
 
         let temp_location = format!("{}/{}_part", entry.download_path, name);
         let final_location = format!("{}/{}", entry.download_path, name);
-        let file: File;
+        let mut file: File;
 
         if !Path::new(&temp_location).exists() && !Path::new(&final_location).exists() {
             println!("Creating temp file: {}", &temp_location);
@@ -136,27 +150,20 @@ impl Download {
                 .unwrap();
         }
 
-        let piece_infos = parse_pieces(&torrent_serializable);
-        let mut download = Download {
+        let pieces = Download::init_pieces(&torrent_serializable, &mut file);
+        Download {
             id: entry.id,
             download_path: entry.download_path.clone(),
             announcement_url: torrent_serializable.announce,
             name: torrent_serializable.info.name,
             temp_location: temp_location,
             file: file,
-            have_block: Vec::new(),
             peers: Vec::new(),
-            piece_infos: piece_infos,
             piece_length: torrent_serializable.info.piece_length,
             length: torrent_serializable.info.length,
-            pieces: torrent_serializable.info.pieces,
+            pieces: pieces,
             info_hash: torrent_serializable.info_hash,
-        };
-
-        let have = get_have(&mut download);
-        download.have_block = have;
-
-        return download;
+        }
     }
 
     pub fn register_outgoing_peer(&mut self, peer_info: PeerInfo) -> usize {
@@ -176,57 +183,139 @@ impl Download {
     pub fn peer(&mut self, peer_id: usize) -> &mut Peer {
         &mut self.peers[peer_id]
     }
+
+    pub fn pieces(&self) -> &Vec<Piece> {
+        &self.pieces
+    }
+
+    pub fn pieces_mut(&mut self) -> &mut Vec<Piece> {
+        &mut self.pieces
+    }
+
+    fn init_pieces(torrent_serializable: &TorrentSerializable, file: &mut File) -> Vec<Piece> {
+        let piece_infos = parse_pieces(&torrent_serializable);
+
+        println!("In init_pieces");
+        let num_pieces = piece_infos.len();
+
+        let mut pieces = Vec::new();
+
+        for piece_id in 0..piece_infos.len() {
+            let block_size = 16384;
+            let mut piece_length = torrent_serializable.info.piece_length;
+
+            if piece_id == num_pieces - 1 {
+                let standard_piece_length = piece_length;
+                let in_previous = standard_piece_length * ((num_pieces - 1) as i64);
+                let remaining = torrent_serializable.info.length - in_previous;
+                println!(
+                    "Remaining in last piece = {} = {} - {} = {} - {} * {}",
+                    remaining,
+                    torrent_serializable.info.length,
+                    in_previous,
+                    torrent_serializable.info.length,
+                    standard_piece_length,
+                    num_pieces - 1
+                );
+                piece_length = remaining;
+            }
+
+            let piece_offset = ((piece_id as i64) * &torrent_serializable.info.piece_length) as u64;
+
+            file.seek(SeekFrom::Start(piece_offset)).unwrap();
+            let mut data = vec![];
+            file.take(piece_length as u64)
+                .read_to_end(&mut data)
+                .unwrap();
+
+            // TODO: don't do this every time, store per piece!
+            let pieces_shas: Vec<Sha1> = torrent_serializable
+                .info
+                .pieces
+                .chunks(20)
+                .map(|v| v.to_owned())
+                .collect();
+            let expected_hash = pieces_shas[piece_id].clone();
+
+            let actual_hash = calculate_sha1(&data);
+
+            let have_this_piece = expected_hash == actual_hash;
+            println!("Have piece_id={}? {}", piece_id, have_this_piece);
+
+            let num_blocks = ((piece_length as f64) / (block_size as f64)).ceil() as usize;
+
+            let mut blocks = Vec::new();
+
+            for block_id in 0..num_blocks {
+                let block_offset = piece_offset + (block_id * block_size) as u64;
+                let block_len = min(
+                    torrent_serializable.info.length - block_offset as i64,
+                    block_size as i64,
+                );
+                blocks.push(Block {
+                    downloaded: have_this_piece,
+                    _offset: block_offset,
+                    _len: block_len as u32,
+                })
+            }
+
+            pieces.push(Piece {
+                downloaded: have_this_piece,
+                sha: expected_hash,
+                blocks: blocks,
+                offset: piece_offset as u32,
+                len: piece_length as u32,
+            });
+        }
+
+        return pieces;
+    }
 }
 
-fn get_have(download: &mut Download) -> Vec<Vec<bool>> {
-    println!("Populating _have_");
-    let mut file = &download.file;
-    let mut have: Vec<Vec<bool>> = Vec::new();
-    for piece_id in 0..download.piece_infos.len() {
-        let mut have_blocks = Vec::new();
-        let block_size = 16384;
-        let mut piece_length = download.piece_length;
-
-        if piece_id == download.piece_infos.len() - 1 {
-            let standard_piece_length = piece_length;
-            let in_previous = standard_piece_length * ((download.piece_infos.len() - 1) as i64);
-            let remaining = download.length - in_previous;
-            println!(
-                "Remaining in last piece = {} = {} - {} = {} - {} * {}",
-                remaining,
-                download.length,
-                in_previous,
-                download.length,
-                standard_piece_length,
-                download.piece_infos.len() - 1
-            );
-            piece_length = remaining;
-        }
-
-        let num_blocks = ((piece_length as f64) / (block_size as f64)).ceil() as usize;
-
-        let offset = ((piece_id as i64) * &download.piece_length) as u64;
-        file.seek(SeekFrom::Start(offset)).unwrap();
-        let mut data = vec![];
-        file.take(piece_length as u64)
-            .read_to_end(&mut data)
-            .unwrap();
-
-        // TODO: don't do this every time, store per piece!
-        let pieces_shas: Vec<Sha1> = download.pieces.chunks(20).map(|v| v.to_owned()).collect();
-        let expected_hash = &pieces_shas[piece_id];
-
-        let actual_hash = calculate_sha1(&data);
-
-        let have_this_piece = *expected_hash == actual_hash;
-        println!("Have piece_id={}? {}", piece_id, have_this_piece);
-
-        for _ in 0..num_blocks {
-            have_blocks.push(have_this_piece);
-        }
-        have.push(have_blocks);
+impl Piece {
+    pub fn downloaded(&self) -> bool {
+        self.downloaded
     }
-    return have;
+
+    pub fn len(&self) -> u32 {
+        self.len
+    }
+
+    pub fn set_block_downloaded(&mut self, block_id: usize) {
+        self.blocks[block_id].set_downloaded();
+        for block in &self.blocks {
+            if !block.downloaded {
+                return;
+            }
+        }
+        self.downloaded = true;
+    }
+
+    pub fn blocks(&self) -> &Vec<Block> {
+        &self.blocks
+    }
+
+    pub fn blocks_mut(&mut self) -> &mut Vec<Block> {
+        &mut self.blocks
+    }
+
+    pub fn sha(&self) -> &Vec<u8> {
+        &self.sha
+    }
+
+    pub fn offset(&self) -> u32 {
+        self.offset
+    }
+}
+
+impl Block {
+    pub fn set_downloaded(&mut self) {
+        self.downloaded = true;
+    }
+
+    pub fn downloaded(&self) -> bool {
+        self.downloaded
+    }
 }
 
 type Sha1 = Vec<u8>;

@@ -68,15 +68,6 @@ pub fn calculate_sha1(input: &[u8]) -> Sha1 {
     buf
 }
 
-fn has_piece(download: &Download, piece_id: usize) -> bool {
-    for b in &download.have_block[piece_id] {
-        if !b {
-            return false;
-        }
-    }
-    return true;
-}
-
 fn reload_config(
     downloads: &mut HashMap<u32, Download>,
     my_id: &String,
@@ -91,8 +82,8 @@ fn reload_config(
 
             let download = to_download(&entry, my_id, is_local);
 
-            for piece_id in 0..download.piece_infos.len() {
-                if !has_piece(&download, piece_id) {
+            for piece_id in 0..download.pieces().len() {
+                if !&download.pieces()[piece_id].downloaded() {
                     queue.push_back(QueueEntry {
                         download_id: entry.id,
                         piece_id: piece_id,
@@ -362,13 +353,7 @@ fn try_download(
         Some(peer_id) => {
             println!("Found peer, peer_id={}", peer_id);
 
-            let mut piece_length = download.piece_length.clone();
-            if piece_id == &download.piece_infos.len() - 1 {
-                let standard_piece_length = piece_length;
-                let in_previous = standard_piece_length * ((download.piece_infos.len() - 1) as i64);
-                let remaining = download.length - in_previous;
-                piece_length = remaining;
-            }
+            let piece_len = download.pieces()[piece_id].len();
 
             let mut peer: &mut Peer = download.peer(peer_id);
             let s: &mut TcpStream = peer
@@ -390,7 +375,7 @@ fn try_download(
                 println!("We are already interested in the peer");
             }
 
-            if request_piece(s, piece_id, piece_length).is_err() {
+            if request_piece(s, piece_id, piece_len as i64).is_err() {
                 println!(
                     "Couldn't request piece - resetting connection with peer_id={}",
                     peer_id
@@ -469,19 +454,20 @@ fn find_peer_for_piece(download: &mut Download, _piece_id: usize) -> Option<usiz
     None
 }
 
+// TODO: move to Download
 fn send_bitfield(peer_id: usize, download: &mut Download) {
     println!(
         "Sending bitfield to peer_id={}, download_id={}",
         peer_id, download.id
     );
 
-    let num_pieces = download.have_block.len();
+    let num_pieces = download.pieces().len();
 
     let mut payload: Vec<u8> = vec![0; (num_pieces as f64 / 8 as f64).ceil() as usize];
     for have_index in 0..num_pieces {
         let bytes_index = have_index / 8;
         let index_into_byte = have_index % 8;
-        if has_piece(download, have_index) {
+        if download.pieces()[have_index].downloaded() {
             let mask = 1 << (7 - index_into_byte);
             payload[bytes_index] |= mask;
         }
@@ -653,6 +639,7 @@ fn on_request(message: Vec<u8>, download: &mut Download, peer_id: usize) {
     send_message(s, 7, &payload).unwrap();
 }
 
+// TODO: move most logic to Download
 fn on_piece(message: Vec<u8>, download: &mut Download, peer_id: usize) {
     let path = &download.temp_location;
     let pieceindex = bytes_to_u32(&message[1..=4]);
@@ -674,7 +661,7 @@ fn on_piece(message: Vec<u8>, download: &mut Download, peer_id: usize) {
     println!("Writing to file");
     file.write(&message[9..]).unwrap();
 
-    download.have_block[pieceindex as usize][block_id] = true;
+    download.pieces_mut()[pieceindex as usize].set_block_downloaded(block_id);
 
     check_if_piece_done(download, pieceindex as usize);
     check_if_done(download);
@@ -689,27 +676,24 @@ pub fn start_listeners(port: u16) -> TcpListener {
     return tcp_listener;
 }
 
+// TODO: move most logic to Download
 fn check_if_piece_done(download: &mut Download, piece_id: usize) {
-    for b in &download.have_block[piece_id] {
-        if !b {
-            return;
-        }
+    let piece = &download.pieces()[piece_id];
+    if !piece.downloaded() {
+        return;
     }
     println!("Piece {} seems to be downloaded...", piece_id);
 
     let mut file = &download.file;
 
-    let offset = ((piece_id as i64) * &download.piece_length) as u64;
-
-    file.seek(io::SeekFrom::Start(offset)).unwrap();
+    file.seek(io::SeekFrom::Start(piece.offset().into()))
+        .unwrap();
     let mut data = vec![];
     file.take(download.piece_length as u64)
         .read_to_end(&mut data)
         .unwrap();
 
-    // TODO: don't do this every time, store per piece!
-    let pieces_shas: Vec<Sha1> = download.pieces.chunks(20).map(|v| v.to_owned()).collect();
-    let expected_hash = &pieces_shas[piece_id];
+    let expected_hash = download.pieces()[piece_id].sha();
 
     let actual_hash = calculate_sha1(&data);
 
@@ -727,16 +711,17 @@ fn check_if_piece_done(download: &mut Download, piece_id: usize) {
     }
 }
 
+// TODO: move most logic to Download
 fn is_done(download: &Download) -> bool {
     println!("Checking if the download is done...");
     let mut num_blocks = 0;
     let mut downloaded_blocks = 0;
     let mut missing: String = String::from("");
 
-    for p_id in 0..download.have_block.len() {
-        let p = &download.have_block[p_id];
-        for b_id in 0..p.len() {
-            let b = p[b_id];
+    for p_id in 0..download.pieces().len() {
+        let p = &download.pieces()[p_id];
+        for b_id in 0..p.blocks().len() {
+            let b = p.blocks()[b_id].downloaded();
             num_blocks += 1;
             if b {
                 downloaded_blocks += 1;
