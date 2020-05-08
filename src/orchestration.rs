@@ -11,19 +11,12 @@ use std::{thread, time};
 
 use serde_bencode::de;
 use std::fs;
-use std::fs::File;
 use std::io::Write;
 use std::io::{self, Read};
 
 use percent_encoding::percent_encode_byte;
 
-use failure::{bail, Error};
-
-use ring::digest;
-
-use serde_bencode::value::Value;
-
-use std::convert::TryInto;
+use failure::Error;
 
 use std::collections::VecDeque;
 
@@ -42,7 +35,7 @@ use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 
 use crate::announcement::PeerInfo;
-use crate::download::{Download, PieceInfo, Torrent};
+use crate::download::Download;
 use crate::io_primitives::read_n;
 use crate::outgoing_connections::*;
 use crate::torrent_entries;
@@ -98,7 +91,7 @@ fn reload_config(
 
             let download = to_download(&entry, my_id, is_local);
 
-            for piece_id in 0..download.torrent.info.piece_infos.len() {
+            for piece_id in 0..download.piece_infos.len() {
                 if !has_piece(&download, piece_id) {
                     queue.push_back(QueueEntry {
                         download_id: entry.id,
@@ -115,59 +108,14 @@ fn reload_config(
 }
 
 fn to_download(entry: &torrent_entries::TorrentEntry, my_id: &String, is_local: bool) -> Download {
-    let torrent = read_torrent(&(entry.torrent_path));
-    let announcement = get_announcement(&torrent, &my_id, is_local).unwrap();
+    let mut download = Download::new(entry);
+    let announcement = get_announcement(&download, &my_id, is_local).unwrap();
 
-    return Download::new(entry, announcement.peers, torrent);
-}
-
-fn read_torrent(path: &String) -> Torrent {
-    println!("Reading torrent file from path: {}", path);
-    let mut f = File::open(&path).expect("no file found");
-    let metadata = fs::metadata(&path).expect("unable to read metadata");
-    let mut buffer = vec![0; metadata.len() as usize];
-    f.read(&mut buffer).expect("buffer overflow");
-
-    let mut torrent = de::from_bytes::<Torrent>(&buffer).unwrap();
-    torrent.info_hash = info_hash(&buffer).unwrap();
-
-    parse_pieces(&mut torrent);
-
-    return torrent;
-}
-
-fn parse_pieces(torrent: &mut Torrent) {
-    println!("Parsing pieces...");
-    let mut piece_infos = Vec::new();
-
-    for piece_id in 0..(torrent.info.pieces.len() / 20) {
-        let from = piece_id * 20;
-        let to = (piece_id + 1) * 20;
-        let bts: [u8; 20] = torrent.info.pieces.as_ref()[from..to].try_into().unwrap();
-
-        piece_infos.push(PieceInfo {
-            downloaded: false,
-            sha: bts.to_vec(),
-        })
+    for peer in announcement.peers {
+        download.register_peer(peer);
     }
-    println!("Total pieces: {}", piece_infos.len());
 
-    torrent.info.piece_infos = piece_infos;
-}
-
-fn info_hash(data: &[u8]) -> Result<Vec<u8>, Error> {
-    let bencode = serde_bencode::from_bytes(data)?;
-    if let Value::Dict(root) = bencode {
-        if let Some(info) = root.get(&b"info".to_vec()) {
-            let info = serde_bencode::to_bytes(info)?;
-            let digest = digest::digest(&digest::SHA1_FOR_LEGACY_USE_ONLY, &info);
-            Ok(digest.as_ref().to_vec())
-        } else {
-            bail!("info dict not found");
-        }
-    } else {
-        bail!("meta file is no dict");
-    }
+    return download;
 }
 
 pub fn start(is_local: bool) {
@@ -209,7 +157,7 @@ fn handle_incoming_connection(
 
             let mut found = false;
             for (download_id, download) in downloads {
-                let d_info_hash = &download.torrent.info_hash;
+                let d_info_hash = &download.info_hash;
                 if *d_info_hash == info_hash {
                     println!("Found corresponding download, download_id={}", download_id);
                     found = true;
@@ -267,7 +215,7 @@ fn request_connections(
                     my_id: my_id.clone(),
                     peer_id: peer_index,
                     download_id: *download_id as usize,
-                    info_hash: download.torrent.info_hash.clone(),
+                    info_hash: download.info_hash.clone(),
                 })
                 .expect("Expected send to succeed");
             }
@@ -425,12 +373,11 @@ fn try_download(
                 println!("We are already interested in the peer");
             }
 
-            let mut piece_length = download.torrent.info.piece_length.clone();
-            if piece_id == &download.torrent.info.piece_infos.len() - 1 {
+            let mut piece_length = download.piece_length.clone();
+            if piece_id == &download.piece_infos.len() - 1 {
                 let standard_piece_length = piece_length;
-                let in_previous =
-                    standard_piece_length * ((download.torrent.info.piece_infos.len() - 1) as i64);
-                let remaining = download.torrent.info.length - in_previous;
+                let in_previous = standard_piece_length * ((download.piece_infos.len() - 1) as i64);
+                let remaining = download.length - in_previous;
                 piece_length = remaining;
             }
 
@@ -515,7 +462,7 @@ fn find_peer_for_piece(download: &Download, _piece_id: usize) -> Option<usize> {
 fn send_bitfield(peer_id: usize, download: &mut Download) {
     println!(
         "Sending bitfield to peer_id={}, download_id={}",
-        peer_id, download.entry.id
+        peer_id, download.id
     );
 
     let num_pieces = download.have_block.len();
@@ -540,7 +487,7 @@ fn send_bitfield(peer_id: usize, download: &mut Download) {
 fn send_unchoke(peer_id: usize, download: &mut Download) {
     println!(
         "Sending unchoked to peer_id={}, download_id={}",
-        peer_id, download.entry.id
+        peer_id, download.id
     );
 
     let v: &mut Vec<Option<TcpStream>> = &mut download.connections;
@@ -673,7 +620,7 @@ fn on_request(message: Vec<u8>, download: &mut Download, peer_id: usize) {
     let mut file = &download.file;
 
     let seek_pos: u64 =
-        ((pieceindex as i64) * (download.torrent.info.piece_length as i64) + (begin as i64)) as u64;
+        ((pieceindex as i64) * (download.piece_length as i64) + (begin as i64)) as u64;
     file.seek(SeekFrom::Start(seek_pos)).unwrap();
 
     let mut data = vec![];
@@ -706,7 +653,7 @@ fn on_piece(message: Vec<u8>, download: &mut Download, peer_id: usize) {
     let mut file = &download.file;
 
     let seek_pos: u64 =
-        ((pieceindex as i64) * (download.torrent.info.piece_length as i64) + (begin as i64)) as u64;
+        ((pieceindex as i64) * (download.piece_length as i64) + (begin as i64)) as u64;
     println!("Seeking position: {}", seek_pos);
     file.seek(SeekFrom::Start(seek_pos)).unwrap();
     println!("Writing to file");
@@ -737,22 +684,16 @@ fn check_if_piece_done(download: &mut Download, piece_id: usize) {
 
     let mut file = &download.file;
 
-    let offset = ((piece_id as i64) * &download.torrent.info.piece_length) as u64;
+    let offset = ((piece_id as i64) * &download.piece_length) as u64;
 
     file.seek(io::SeekFrom::Start(offset)).unwrap();
     let mut data = vec![];
-    file.take(download.torrent.info.piece_length as u64)
+    file.take(download.piece_length as u64)
         .read_to_end(&mut data)
         .unwrap();
 
     // TODO: don't do this every time, store per piece!
-    let pieces_shas: Vec<Sha1> = download
-        .torrent
-        .info
-        .pieces
-        .chunks(20)
-        .map(|v| v.to_owned())
-        .collect();
+    let pieces_shas: Vec<Sha1> = download.pieces.chunks(20).map(|v| v.to_owned()).collect();
     let expected_hash = &pieces_shas[piece_id];
 
     let actual_hash = calculate_sha1(&data);
@@ -806,21 +747,18 @@ fn check_if_done(download: &Download) {
 
 fn on_done(download: &Download) {
     println!("Download is done!");
-    let dest = format!(
-        "{}/{}",
-        download.entry.download_path, download.torrent.info.name
-    );
+    let dest = format!("{}/{}", download.download_path, download.name);
     println!("Moving {} to {}", download.temp_location, dest);
     fs::rename(&download.temp_location, dest).unwrap();
 }
 
 fn get_announcement(
-    torrent: &Torrent,
+    download: &Download,
     peer_id: &String,
     is_local: bool,
 ) -> Result<Announcement, Error> {
     let client = reqwest::Client::new();
-    let info_hash = &torrent.info_hash;
+    let info_hash = &download.info_hash;
     let urlencodedih: String = info_hash
         .iter()
         .map(|byte| percent_encode_byte(*byte))
@@ -833,7 +771,11 @@ fn get_announcement(
         ("port", "6881".to_string()),
         ("left", "0".to_string()),
     ];
-    let request = client.get(&torrent.announce).query(&query).build().unwrap();
+    let request = client
+        .get(&download.announcement_url)
+        .query(&query)
+        .build()
+        .unwrap();
 
     let url = request.url();
     let url = format!("{}&info_hash={}", url, urlencodedih);
