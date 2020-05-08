@@ -37,14 +37,12 @@ pub struct Download {
     pub announcement_url: String,
     pub name: String,
 
-    pub connections: Vec<Option<TcpStream>>,
-    pub we_interested: Vec<bool>,
-    pub we_choked: Vec<bool>,
     pub temp_location: String,
     pub file: File,
     pub have_block: Vec<Vec<bool>>,
 
-    pub peers: Vec<PeerInfo>,
+    peers: Vec<Peer>,
+
     pub piece_infos: Vec<PieceInfo>,
     pub piece_length: i64,
     pub length: i64,
@@ -74,6 +72,26 @@ struct TorrentInfoSerializable {
 pub struct PieceInfo {
     pub downloaded: bool,
     pub sha: Vec<u8>,
+}
+
+pub struct Peer {
+    pub stream: Option<TcpStream>,
+
+    pub we_interested: bool,
+    pub we_choked: bool,
+
+    pub peer_info: Option<PeerInfo>,
+}
+
+impl Peer {
+    pub fn new(stream: Option<TcpStream>, peer_info: Option<PeerInfo>) -> Peer {
+        Peer {
+            stream: stream,
+            peer_info: peer_info,
+            we_interested: false,
+            we_choked: true,
+        }
+    }
 }
 
 impl Download {
@@ -124,9 +142,6 @@ impl Download {
             download_path: entry.download_path.clone(),
             announcement_url: torrent_serializable.announce,
             name: torrent_serializable.info.name,
-            connections: Vec::new(),
-            we_interested: Vec::new(),
-            we_choked: Vec::new(),
             temp_location: temp_location,
             file: file,
             have_block: Vec::new(),
@@ -144,11 +159,22 @@ impl Download {
         return download;
     }
 
-    pub fn register_peer(&mut self, peer_info: PeerInfo) {
-        self.connections.push(None);
-        self.we_interested.push(false);
-        self.we_choked.push(true);
-        self.peers.push(peer_info);
+    pub fn register_outgoing_peer(&mut self, peer_info: PeerInfo) -> usize {
+        self.peers.push(Peer::new(None, Some(peer_info)));
+        return self.peers.len() - 1;
+    }
+
+    pub fn register_incoming_peer(&mut self, stream: TcpStream) -> usize {
+        self.peers.push(Peer::new(Some(stream), None));
+        return self.peers.len() - 1;
+    }
+
+    pub fn peers(&mut self) -> &mut Vec<Peer> {
+        &mut self.peers
+    }
+
+    pub fn peer(&mut self, peer_id: usize) -> &mut Peer {
+        &mut self.peers[peer_id]
     }
 }
 

@@ -35,7 +35,7 @@ use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 
 use crate::announcement::PeerInfo;
-use crate::download::Download;
+use crate::download::{Download, Peer};
 use crate::io_primitives::read_n;
 use crate::outgoing_connections::*;
 use crate::torrent_entries;
@@ -112,7 +112,7 @@ fn to_download(entry: &torrent_entries::TorrentEntry, my_id: &String, is_local: 
     let announcement = get_announcement(&download, &my_id, is_local).unwrap();
 
     for peer in announcement.peers {
-        download.register_peer(peer);
+        download.register_outgoing_peer(peer);
     }
 
     return download;
@@ -162,8 +162,7 @@ fn handle_incoming_connection(
                     println!("Found corresponding download, download_id={}", download_id);
                     found = true;
                     s.set_nonblocking(true).unwrap();
-                    download.connections.push(Some(s));
-                    let peer_index = download.connections.len() - 1;
+                    let peer_index = download.register_incoming_peer(s);
                     send_bitfield(peer_index, download);
                     send_unchoke(peer_index, download);
                     println!("Done adding the connection to download");
@@ -187,19 +186,26 @@ fn request_connections(
     outx: Sender<OpenConnectionRequest>,
 ) {
     for (download_id, download) in downloads {
-        for peer_index in 0..download.connections.len() {
+        for peer_index in 0..download.peers().len() {
             if download
-                .connections
+                .peers()
                 .get(peer_index)
-                .expect("expected connection to be in the vec")
+                .expect("expected peer to be in the vec")
+                .stream
                 .is_none()
             {
                 let peer = download
-                    .peers
+                    .peers()
                     .get(peer_index)
                     .expect("Expected peer to be in the list");
 
-                if peer.port == 6881 {
+                if peer.peer_info.is_none() {
+                    continue;
+                }
+
+                let peer_info = peer.peer_info.as_ref().unwrap();
+
+                if peer_info.port == 6881 {
                     // Don't connect to self.
                     // TODO: use id instead.
                     continue;
@@ -210,8 +216,8 @@ fn request_connections(
                     peer_index, download_id
                 );
                 outx.send(OpenConnectionRequest {
-                    ip: peer.ip.clone(),
-                    port: peer.port.clone(),
+                    ip: peer_info.ip.clone(),
+                    port: peer_info.port.clone(),
                     my_id: my_id.clone(),
                     peer_id: peer_index,
                     download_id: *download_id as usize,
@@ -244,7 +250,7 @@ fn process_new_connections(
                         let download = downloads
                             .get_mut(&(response.download_id as u32))
                             .expect("Download must exist");
-                        download.connections[response.peer_id] = Some(stream);
+                        download.peers()[response.peer_id].stream = Some(stream);
                         send_bitfield(response.peer_id, download);
                         send_unchoke(response.peer_id, download);
                     }
@@ -355,23 +361,6 @@ fn try_download(
     match find_peer_for_piece(download, piece_id) {
         Some(peer_id) => {
             println!("Found peer, peer_id={}", peer_id);
-            let v: &mut Vec<Option<TcpStream>> = &mut download.connections;
-            let mut o: Option<&mut TcpStream> = v[peer_id].as_mut();
-            let s: &mut TcpStream = o.as_mut().expect("Expected the stream to be present");
-
-            if !download.we_interested[peer_id] {
-                if send_interested(s).is_err() {
-                    println!(
-                        "Couldn't send interested - resetting connection with peer_id={}",
-                        peer_id
-                    );
-                    v[peer_id] = None;
-                    return Err(());
-                }
-                download.we_interested[peer_id] = true;
-            } else {
-                println!("We are already interested in the peer");
-            }
 
             let mut piece_length = download.piece_length.clone();
             if piece_id == &download.piece_infos.len() - 1 {
@@ -381,12 +370,32 @@ fn try_download(
                 piece_length = remaining;
             }
 
+            let mut peer: &mut Peer = download.peer(peer_id);
+            let s: &mut TcpStream = peer
+                .stream
+                .as_mut()
+                .expect("Expected the stream to be present");
+
+            if !peer.we_interested {
+                if send_interested(s).is_err() {
+                    println!(
+                        "Couldn't send interested - resetting connection with peer_id={}",
+                        peer_id
+                    );
+                    peer.stream = None;
+                    return Err(());
+                }
+                peer.we_interested = true;
+            } else {
+                println!("We are already interested in the peer");
+            }
+
             if request_piece(s, piece_id, piece_length).is_err() {
                 println!(
                     "Couldn't request piece - resetting connection with peer_id={}",
                     peer_id
                 );
-                v[peer_id] = None;
+                peer.stream = None;
                 return Err(());
             }
             return Ok(());
@@ -437,16 +446,17 @@ fn request_piece(
     return Ok(());
 }
 
-fn find_peer_for_piece(download: &Download, _piece_id: usize) -> Option<usize> {
+fn find_peer_for_piece(download: &mut Download, _piece_id: usize) -> Option<usize> {
     let mut no_connection = 0;
     let mut choked = 0;
-    for peer_index in 0..download.peers.len() {
+    for peer_index in 0..download.peers().len() {
+        let peer = download.peer(peer_index);
         // TODO: check if has piece!
-        if download.connections[peer_index].is_none() {
+        if peer.stream.is_none() {
             no_connection += 1;
             continue;
         }
-        if download.we_choked[peer_index] {
+        if peer.we_choked {
             choked += 1;
             continue;
         }
@@ -477,9 +487,11 @@ fn send_bitfield(peer_id: usize, download: &mut Download) {
         }
     }
 
-    let v: &mut Vec<Option<TcpStream>> = &mut download.connections;
-    let mut o: Option<&mut TcpStream> = v[peer_id].as_mut();
-    let s: &mut TcpStream = o.as_mut().expect("Expected the stream to be present");
+    let peer: &mut Peer = download.peer(peer_id);
+    let s: &mut TcpStream = peer
+        .stream
+        .as_mut()
+        .expect("Expected the stream to be present");
 
     send_message(s, 5, &payload).unwrap();
 }
@@ -490,9 +502,11 @@ fn send_unchoke(peer_id: usize, download: &mut Download) {
         peer_id, download.id
     );
 
-    let v: &mut Vec<Option<TcpStream>> = &mut download.connections;
-    let mut o: Option<&mut TcpStream> = v[peer_id].as_mut();
-    let s: &mut TcpStream = o.as_mut().expect("Expected the stream to be present");
+    let peer: &mut Peer = download.peer(peer_id);
+    let s: &mut TcpStream = peer
+        .stream
+        .as_mut()
+        .expect("Expected the stream to be present");
 
     send_message(s, 1, &Vec::new()).unwrap();
 }
@@ -502,16 +516,14 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
     for download in downloads.values_mut() {
         let mut peer_id: usize = 0;
 
-        let connections = &download.connections;
-
         struct Msg {
             message: Vec<u8>,
             peer_id: usize,
         }
         let mut to_process = Vec::new();
         let mut connections_to_reset: Vec<usize> = Vec::new();
-        for stream_opt in connections {
-            match stream_opt {
+        for peer in download.peers() {
+            match &peer.stream {
                 Some(stream) => loop {
                     println!("Getting message size... peer_id={}", peer_id);
                     match read_n(&stream, 4, false) {
@@ -561,7 +573,7 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
             process_message(msg.message, download, msg.peer_id);
         }
         for p in connections_to_reset {
-            download.connections[p] = None;
+            download.peers()[p].stream = None;
         }
     }
 }
@@ -569,14 +581,15 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
 fn process_message(message: Vec<u8>, download: &mut Download, peer_id: usize) {
     let resptype = message[0];
     println!("Response type: {}", resptype);
+    let mut peer = download.peer(peer_id);
     match resptype {
         0 => {
             println!("Choked! peer_id={}", peer_id);
-            download.we_choked[peer_id] = true;
+            peer.we_choked = true;
         }
         1 => {
             println!("Unchoked! peer_id={}", peer_id);
-            download.we_choked[peer_id] = false;
+            peer.we_choked = false;
         }
         2 => {
             println!("Interested! peer_id={}", peer_id);
@@ -626,9 +639,11 @@ fn on_request(message: Vec<u8>, download: &mut Download, peer_id: usize) {
     let mut data = vec![];
     file.take(length as u64).read_to_end(&mut data).unwrap();
 
-    let v: &mut Vec<Option<TcpStream>> = &mut download.connections;
-    let mut o: Option<&mut TcpStream> = v[peer_id].as_mut();
-    let s: &mut TcpStream = o.as_mut().expect("Expected the stream to be present");
+    let peer: &mut Peer = download.peer(peer_id);
+    let s: &mut TcpStream = peer
+        .stream
+        .as_mut()
+        .expect("Expected the stream to be present");
 
     let mut payload: Vec<u8> = Vec::new();
     payload.extend(u32_to_bytes(pieceindex));
