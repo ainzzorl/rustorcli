@@ -32,66 +32,20 @@ use std::net::{TcpListener, TcpStream};
 use std::io::Seek;
 use std::io::SeekFrom;
 
-use std::os::unix::fs::OpenOptionsExt;
-
 extern crate crypto;
 
 extern crate hex;
 
 use self::crypto::digest::Digest;
 
-use std::path::Path;
-
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 
+use crate::announcement::PeerInfo;
+use crate::download::{Download, PieceInfo, Torrent};
 use crate::io_primitives::read_n;
-use crate::torrent_entries;
 use crate::outgoing_connections::*;
-
-pub struct Download {
-    entry: torrent_entries::TorrentEntry,
-    torrent: Torrent,
-    announcement: Announcement,
-    connections: Vec<Option<TcpStream>>,
-    we_interested: Vec<bool>,
-    we_choked: Vec<bool>,
-    temp_location: String,
-    file: File,
-    have_block: Vec<Vec<bool>>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct Torrent {
-    announce: String,
-    info: TorrentInfo,
-    #[serde(default)]
-    info_hash: Vec<u8>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct TorrentFile {
-    path: Vec<String>,
-    length: i64,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-struct TorrentInfo {
-    name: String,
-    length: i64,
-    #[serde(rename = "piece length")]
-    piece_length: i64,
-    pieces: ByteBuf,
-
-    #[serde(default)]
-    piece_infos: Vec<PieceInfo>,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-struct PieceInfo {
-    downloaded: bool,
-    sha: Vec<u8>,
-}
+use crate::torrent_entries;
 
 #[derive(Debug, Deserialize, Serialize)]
 struct Announcement {
@@ -103,12 +57,6 @@ struct Announcement {
 struct AnnouncementAltPeers {
     interval: i64,
     peers: ByteBuf,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-struct PeerInfo {
-    ip: String,
-    port: u64,
 }
 
 struct QueueEntry {
@@ -166,136 +114,11 @@ fn reload_config(
     // TODO: remove removed downloads
 }
 
-fn get_have(download: &mut Download) -> Vec<Vec<bool>> {
-    println!("Populating _have_");
-    let mut file = &download.file;
-    let mut have: Vec<Vec<bool>> = Vec::new();
-    let torrent = &download.torrent;
-    for piece_id in 0..torrent.info.piece_infos.len() {
-        let mut have_blocks = Vec::new();
-        let block_size = 16384;
-        let mut piece_length = torrent.info.piece_length;
-
-        if piece_id == torrent.info.piece_infos.len() - 1 {
-            let standard_piece_length = piece_length;
-            let in_previous = standard_piece_length * ((torrent.info.piece_infos.len() - 1) as i64);
-            let remaining = torrent.info.length - in_previous;
-            println!(
-                "Remaining in last piece = {} = {} - {} = {} - {} * {}",
-                remaining,
-                torrent.info.length,
-                in_previous,
-                torrent.info.length,
-                standard_piece_length,
-                torrent.info.piece_infos.len() - 1
-            );
-            piece_length = remaining;
-        }
-
-        let num_blocks = ((piece_length as f64) / (block_size as f64)).ceil() as usize;
-
-        let offset = ((piece_id as i64) * &download.torrent.info.piece_length) as u64;
-        file.seek(io::SeekFrom::Start(offset)).unwrap();
-        let mut data = vec![];
-        file.take(piece_length as u64)
-            .read_to_end(&mut data)
-            .unwrap();
-
-        // TODO: don't do this every time, store per piece!
-        let pieces_shas: Vec<Sha1> = download
-            .torrent
-            .info
-            .pieces
-            .chunks(20)
-            .map(|v| v.to_owned())
-            .collect();
-        let expected_hash = &pieces_shas[piece_id];
-
-        let actual_hash = calculate_sha1(&data);
-
-        let have_this_piece = *expected_hash == actual_hash;
-        println!("Have piece_id={}? {}", piece_id, have_this_piece);
-
-        for _ in 0..num_blocks {
-            have_blocks.push(have_this_piece);
-        }
-        have.push(have_blocks);
-    }
-    return have;
-}
-
 fn to_download(entry: &torrent_entries::TorrentEntry, my_id: &String, is_local: bool) -> Download {
     let torrent = read_torrent(&(entry.torrent_path));
     let announcement = get_announcement(&torrent, &my_id, is_local).unwrap();
 
-    let num_peers = announcement.peers.len();
-    let mut connections: Vec<Option<TcpStream>> = Vec::new();
-    let mut we_interested: Vec<bool> = Vec::new();
-    let mut we_choked: Vec<bool> = Vec::new();
-    for _ in 0..num_peers {
-        connections.push(None);
-        we_interested.push(false);
-        we_choked.push(true);
-    }
-
-    let name = torrent.info.name.clone();
-
-    let temp_location = format!("{}/{}_part", entry.download_path, name);
-    let final_location = format!("{}/{}", entry.download_path, name);
-    let file: File;
-
-    if !Path::new(&temp_location).exists() && !Path::new(&final_location).exists() {
-        println!("Creating temp file: {}", &temp_location);
-        match fs::OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .mode(0o770)
-            .open(&temp_location)
-        {
-            Err(_why) => panic!("Couldn't create file {}", &temp_location),
-            Ok(rs) => {
-                file = rs;
-            }
-        };
-    } else if Path::new(&final_location).exists() {
-        file = fs::OpenOptions::new()
-            .create(false)
-            .read(true)
-            .write(false)
-            .mode(0o770)
-            .open(&final_location)
-            .unwrap();
-    } else {
-        file = fs::OpenOptions::new()
-            .create(false)
-            .read(true)
-            .write(true)
-            .mode(0o770)
-            .open(&temp_location)
-            .unwrap();
-    }
-
-    let mut download = Download {
-        entry: torrent_entries::TorrentEntry::new(
-            entry.id,
-            entry.torrent_path.clone(),
-            entry.download_path.clone(),
-        ),
-        torrent: torrent,
-        announcement: announcement,
-        connections: connections,
-        we_interested: we_interested,
-        we_choked: we_choked,
-        temp_location: temp_location,
-        file: file,
-        have_block: Vec::new(),
-    };
-
-    let have = get_have(&mut download);
-    download.have_block = have;
-
-    return download;
+    return Download::new(entry, announcement.peers, torrent);
 }
 
 fn read_torrent(path: &String) -> Torrent {
@@ -424,7 +247,6 @@ fn request_connections(
                 .is_none()
             {
                 let peer = download
-                    .announcement
                     .peers
                     .get(peer_index)
                     .expect("Expected peer to be in the list");
@@ -671,7 +493,7 @@ fn request_piece(
 fn find_peer_for_piece(download: &Download, _piece_id: usize) -> Option<usize> {
     let mut no_connection = 0;
     let mut choked = 0;
-    for peer_index in 0..download.announcement.peers.len() {
+    for peer_index in 0..download.peers.len() {
         // TODO: check if has piece!
         if download.connections[peer_index].is_none() {
             no_connection += 1;

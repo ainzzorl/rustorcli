@@ -1,3 +1,5 @@
+pub mod announcement;
+pub mod download;
 pub mod handshake;
 pub mod io_primitives;
 pub mod outgoing_connections;

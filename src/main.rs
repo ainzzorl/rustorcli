@@ -4,6 +4,8 @@ extern crate serde_derive;
 extern crate daemonize;
 extern crate sysinfo;
 
+pub mod announcement;
+pub mod download;
 pub mod handshake;
 pub mod io_primitives;
 pub mod orchestration;
