@@ -2,11 +2,11 @@ test :
 			 cargo test -- --test-threads=1
 
 e2e-incoming :
-			 cargo test e2e_incoming -- --nocapture --ignored
+			 RUST_BACKTRACE=1 cargo test e2e_incoming -- --nocapture --ignored
 			 cargo run stop
 
 e2e-outgoing :
-			 cargo test e2e_outgoing -- --nocapture --ignored
+			 RUST_BACKTRACE=1 cargo test e2e_outgoing -- --nocapture --ignored
 			 cargo run stop
 
 cleanup:
