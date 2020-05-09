@@ -233,7 +233,11 @@ fn restart_webtorrent() -> Result<(), Box<dyn std::error::Error>> {
 
 fn stop_and_clean_rustorcli() -> Result<(), Box<dyn std::error::Error>> {
     println!("Stopping rustorcli");
-    Command::main_binary()?.arg("stop").assert().success();
+    Command::main_binary()?
+        .arg("stop")
+        .stdout(Stdio::inherit())
+        .assert()
+        .success();
 
     println!("Cleaning up rustorcli");
     let config_directory = torrent_entries::config_directory();
