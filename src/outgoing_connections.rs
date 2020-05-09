@@ -39,6 +39,8 @@ pub fn open_missing_connections(
         let request = request_opt.unwrap();
         let ip = if request.ip == "::1" {
             String::from("127.0.0.1")
+        } else if request.ip == "::ffff:127.0.0.1" {
+            String::from("127.0.0.1")
         } else {
             request.ip.clone()
         }; // TODO: remove this

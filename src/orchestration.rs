@@ -361,7 +361,9 @@ fn request_block(
     let block = &download.pieces()[piece_id].blocks()[block_id];
 
     println!(
-        "Requesting block={} from piece_id={}, offset={}, len={}",
+        "Requesting download_id={}, peer_id={}, block={} from piece_id={}, offset={}, len={}",
+        download.id,
+        peer_id,
         block_id,
         piece_id,
         block.offset(),
@@ -529,7 +531,7 @@ fn process_message(message: Vec<u8>, download: &mut Download, peer_id: usize) {
             on_request(message, download, peer_id);
         }
         7 => {
-            println!("Piece! peer_id={}", peer_id);
+            println!("Piece! download_id={}, peer_id={}", download.id, peer_id);
             on_piece(message, download, peer_id);
         }
         _ => {
