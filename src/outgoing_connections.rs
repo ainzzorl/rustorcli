@@ -3,6 +3,7 @@ use std::net::SocketAddr;
 use std::net::TcpStream;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
+use std::{thread, time};
 
 use crate::handshake::handshake;
 
@@ -30,7 +31,12 @@ pub fn open_missing_connections(
     println!("In open_missing_connections");
 
     loop {
-        let request = inx.recv().expect("Expected to receive a request");
+        let request_opt = inx.recv();
+        if request_opt.is_err() {
+            thread::sleep(time::Duration::from_secs(1));
+            continue;
+        }
+        let request = request_opt.unwrap();
         let ip = if request.ip == "::1" {
             String::from("127.0.0.1")
         } else {

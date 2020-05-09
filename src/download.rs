@@ -61,8 +61,15 @@ pub struct Piece {
 
 pub struct Block {
     downloaded: bool,
-    _offset: u64,
-    _len: u32,
+    offset: u64,
+    len: u32,
+
+    request_record: Option<BlockRequestRecord>,
+}
+
+pub struct BlockRequestRecord {
+    pub peer_id: usize,
+    pub time: std::time::SystemTime,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -95,6 +102,8 @@ pub struct Peer {
     pub we_choked: bool,
 
     pub peer_info: Option<PeerInfo>,
+
+    pub outstanding_block_requests: i32,
 }
 
 impl Peer {
@@ -104,6 +113,7 @@ impl Peer {
             peer_info: peer_info,
             we_interested: false,
             we_choked: true,
+            outstanding_block_requests: 0,
         }
     }
 }
@@ -176,11 +186,19 @@ impl Download {
         return self.peers.len() - 1;
     }
 
-    pub fn peers(&mut self) -> &mut Vec<Peer> {
+    pub fn peers(&self) -> &Vec<Peer> {
+        &self.peers
+    }
+
+    pub fn peers_mut(&mut self) -> &mut Vec<Peer> {
         &mut self.peers
     }
 
-    pub fn peer(&mut self, peer_id: usize) -> &mut Peer {
+    pub fn peer(&self, peer_id: usize) -> &Peer {
+        &self.peers[peer_id]
+    }
+
+    pub fn peer_mut(&mut self, peer_id: usize) -> &mut Peer {
         &mut self.peers[peer_id]
     }
 
@@ -247,15 +265,16 @@ impl Download {
             let mut blocks = Vec::new();
 
             for block_id in 0..num_blocks {
-                let block_offset = piece_offset + (block_id * block_size) as u64;
+                let block_offset = (block_id * block_size) as u64;
                 let block_len = min(
-                    torrent_serializable.info.length - block_offset as i64,
+                    torrent_serializable.info.length - (piece_offset as i64) - block_offset as i64,
                     block_size as i64,
                 );
                 blocks.push(Block {
                     downloaded: have_this_piece,
-                    _offset: block_offset,
-                    _len: block_len as u32,
+                    offset: block_offset,
+                    len: block_len as u32,
+                    request_record: None,
                 })
             }
 
@@ -315,6 +334,22 @@ impl Block {
 
     pub fn downloaded(&self) -> bool {
         self.downloaded
+    }
+
+    pub fn offset(&self) -> u64 {
+        self.offset
+    }
+
+    pub fn len(&self) -> u32 {
+        self.len
+    }
+
+    pub fn request_record(&self) -> &Option<BlockRequestRecord> {
+        &self.request_record
+    }
+
+    pub fn set_request_record(&mut self, request_record: Option<BlockRequestRecord>) {
+        self.request_record = request_record;
     }
 }
 

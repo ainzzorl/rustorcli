@@ -18,8 +18,6 @@ use percent_encoding::percent_encode_byte;
 
 use failure::Error;
 
-use std::collections::VecDeque;
-
 use std::net::{TcpListener, TcpStream};
 
 use std::io::Seek;
@@ -35,6 +33,7 @@ use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 
 use crate::announcement::PeerInfo;
+use crate::decider::*;
 use crate::download::{Download, Peer};
 use crate::io_primitives::read_n;
 use crate::outgoing_connections::*;
@@ -52,11 +51,6 @@ struct AnnouncementAltPeers {
     peers: ByteBuf,
 }
 
-struct QueueEntry {
-    download_id: u32,
-    piece_id: usize,
-}
-
 pub type Sha1 = Vec<u8>;
 
 pub fn calculate_sha1(input: &[u8]) -> Sha1 {
@@ -68,12 +62,7 @@ pub fn calculate_sha1(input: &[u8]) -> Sha1 {
     buf
 }
 
-fn reload_config(
-    downloads: &mut HashMap<u32, Download>,
-    my_id: &String,
-    queue: &mut VecDeque<QueueEntry>,
-    is_local: bool,
-) {
+fn reload_config(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: bool) {
     let entries = torrent_entries::list_torrents();
     println!("Reloading config. Entries: {}", entries.len());
     for entry in entries {
@@ -81,15 +70,6 @@ fn reload_config(
             println!("Adding entry, id={}", entry.id);
 
             let download = to_download(&entry, my_id, is_local);
-
-            for piece_id in 0..download.pieces().len() {
-                if !&download.pieces()[piece_id].downloaded() {
-                    queue.push_back(QueueEntry {
-                        download_id: entry.id,
-                        piece_id: piece_id,
-                    });
-                }
-            }
 
             downloads.insert(entry.id, download);
         }
@@ -177,7 +157,7 @@ fn request_connections(
     outx: Sender<OpenConnectionRequest>,
 ) {
     for (download_id, download) in downloads {
-        for peer_index in 0..download.peers().len() {
+        for peer_index in 0..download.peers_mut().len() {
             if download
                 .peers()
                 .get(peer_index)
@@ -241,7 +221,7 @@ fn process_new_connections(
                         let download = downloads
                             .get_mut(&(response.download_id as u32))
                             .expect("Download must exist");
-                        download.peers()[response.peer_id].stream = Some(stream);
+                        download.peers_mut()[response.peer_id].stream = Some(stream);
                         send_bitfield(response.peer_id, download);
                         send_unchoke(response.peer_id, download);
                     }
@@ -259,17 +239,7 @@ fn process_new_connections(
 }
 
 fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: bool) {
-    // TODO: extract this to some method
-    // let (tx, rx) = channel();
-    // let mut watcher: RecommendedWatcher = Watcher::new(tx, Duration::from_secs(2)).unwrap();
-    // let config_directory = torrent_entries::config_directory();
-    // watcher
-    //     .watch(config_directory, RecursiveMode::Recursive)
-    //     .unwrap();
-
-    let mut queue = VecDeque::new();
-
-    reload_config(downloads, &my_id, &mut queue, is_local);
+    reload_config(downloads, &my_id, is_local);
 
     let mut tcp_listener = start_listeners(6881);
 
@@ -295,98 +265,74 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: b
 
     loop {
         println!("Main loop iteration #{}", iteration);
-        println!("Entries in the queue: {}", queue.len());
 
-        // match rx.recv_timeout(time::Duration::from_millis(1000)) {
-        //     Ok(event) => {
-        //         println!("{:?}", event);
-        //         reload_config(downloads, &my_id, &mut queue);
-        //     }
-        //     Err(e) => {
-        //         println!("watch error: {:?}", e);
-        //         // TODO: remove this
-        //         if iteration % 10 == 0 {
-        //             println!("Reloading on iteration {}", iteration);
-        //             reload_config(downloads, &my_id, &mut queue);
-        //         }
-        //     }
-        // }
         if iteration % 100 == 0 {
             println!("Reloading config on iteration {}", iteration);
-            reload_config(downloads, &my_id, &mut queue, is_local);
+            reload_config(downloads, &my_id, is_local);
         }
 
         process_new_connections(downloads, &open_connections_response_receiver);
         receive_incoming_connections(&mut tcp_listener, my_id, downloads);
         receive_messages(downloads);
 
-        match queue.pop_front() {
-            Some(c) => match try_download(downloads, c.download_id, c.piece_id) {
-                Ok(()) => {
-                    println!("Successfuly requested piece, keeping it out of the queue");
-                }
-                Err(()) => {
-                    println!("Failed to download the piece, moving it back to the queue");
-                    queue.push_back(c);
-                }
-            },
-            None => {}
-        }
+        execute_block_requests(downloads);
 
         thread::sleep(time::Duration::from_millis(100));
         iteration += 1;
     }
 }
 
-fn try_download(
-    downloads: &mut HashMap<u32, Download>,
-    download_id: u32,
-    piece_id: usize,
-) -> Result<(), ()> {
-    println!(
-        "Trying to download next chunk: download_id={}, piece_id={}",
-        download_id, piece_id
-    );
-    let download = downloads.get_mut(&download_id).unwrap();
+fn execute_block_requests(downloads: &mut HashMap<u32, Download>) {
+    for d in downloads.values_mut() {
+        let mut download: &mut Download = d;
+        let requests = decide_block_requests(download);
+        println!(
+            "Executing {} requests for download_id={}",
+            requests.len(),
+            download.id
+        );
 
-    match find_peer_for_piece(download, piece_id) {
-        Some(peer_id) => {
-            println!("Found peer, peer_id={}", peer_id);
-
-            let piece_len = download.pieces()[piece_id].len();
-
-            let mut peer: &mut Peer = download.peer(peer_id);
-            let s: &mut TcpStream = peer
+        let mut to_reset = Vec::new();
+        for request in requests {
+            let peer = &mut download.peers_mut()[request.peer_id];
+            let stream = &mut peer
                 .stream
                 .as_mut()
                 .expect("Expected the stream to be present");
 
             if !peer.we_interested {
-                if send_interested(s).is_err() {
+                if send_interested(stream).is_err() {
                     println!(
                         "Couldn't send interested - resetting connection with peer_id={}",
-                        peer_id
+                        request.peer_id
                     );
-                    peer.stream = None;
-                    return Err(());
+                    to_reset.push(request.peer_id);
+                    continue;
                 }
                 peer.we_interested = true;
             } else {
                 println!("We are already interested in the peer");
             }
 
-            if request_piece(s, piece_id, piece_len as i64).is_err() {
+            if request_block(
+                &mut download,
+                request.piece_id,
+                request.block_id,
+                request.peer_id,
+            )
+            .is_err()
+            {
                 println!(
                     "Couldn't request piece - resetting connection with peer_id={}",
-                    peer_id
+                    request.peer_id
                 );
-                peer.stream = None;
-                return Err(());
+                to_reset.push(request.peer_id);
             }
-            return Ok(());
         }
-        None => {
-            return Err(());
+
+        for peer_id in to_reset {
+            let peer = &mut download.peers_mut()[peer_id];
+            peer.stream = None;
         }
     }
 }
@@ -396,62 +342,37 @@ fn send_interested(stream: &mut TcpStream) -> Result<(), std::io::Error> {
     return send_message(stream, 2, &Vec::new());
 }
 
-fn request_piece(
-    stream: &mut TcpStream,
+fn request_block(
+    download: &mut Download,
     piece_id: usize,
-    piece_length: i64,
+    block_id: usize,
+    peer_id: usize,
 ) -> Result<(), std::io::Error> {
-    println!("Requesting piece {} of length {}", piece_id, piece_length); // TODO: what about last piece?
+    let block = &download.pieces()[piece_id].blocks()[block_id];
 
-    let block_size = 16384 as i64;
-    let num_blocks = ((piece_length as f64) / (block_size as f64)).ceil() as usize;
+    println!(
+        "Requesting block={} from piece_id={}, offset={}, len={}",
+        block_id,
+        piece_id,
+        block.offset(),
+        block.len()
+    );
 
-    let mut remaining = piece_length;
-
-    for block in 0..num_blocks {
-        let start = (block as i64) * block_size;
-        let size = if remaining > block_size {
-            block_size
-        } else {
-            remaining
-        };
-
-        println!("Requesting block {} of size {}", block, size);
-
-        let mut payload: Vec<u8> = Vec::new();
-        payload.extend(u32_to_bytes(piece_id as u32));
-        payload.extend(u32_to_bytes(start as u32));
-        payload.extend(u32_to_bytes(size as u32));
-        send_message(stream, 6, &payload)?;
-
-        remaining -= size;
-    }
+    let mut payload: Vec<u8> = Vec::new();
+    payload.extend(u32_to_bytes(piece_id as u32));
+    payload.extend(u32_to_bytes(block.offset() as u32));
+    payload.extend(u32_to_bytes(block.len() as u32));
+    send_message(
+        download.peers_mut()[peer_id]
+            .stream
+            .as_mut()
+            .expect("Expect the stream to be present"),
+        6,
+        &payload,
+    )?;
 
     println!("Done requesting block");
     return Ok(());
-}
-
-fn find_peer_for_piece(download: &mut Download, _piece_id: usize) -> Option<usize> {
-    let mut no_connection = 0;
-    let mut choked = 0;
-    for peer_index in 0..download.peers().len() {
-        let peer = download.peer(peer_index);
-        // TODO: check if has piece!
-        if peer.stream.is_none() {
-            no_connection += 1;
-            continue;
-        }
-        if peer.we_choked {
-            choked += 1;
-            continue;
-        }
-        return Some(peer_index);
-    }
-    println!(
-        "Did not find appropriate peer. No connection: {}, choked: {}",
-        no_connection, choked
-    );
-    None
 }
 
 // TODO: move to Download
@@ -473,7 +394,7 @@ fn send_bitfield(peer_id: usize, download: &mut Download) {
         }
     }
 
-    let peer: &mut Peer = download.peer(peer_id);
+    let peer: &mut Peer = download.peer_mut(peer_id);
     let s: &mut TcpStream = peer
         .stream
         .as_mut()
@@ -488,7 +409,7 @@ fn send_unchoke(peer_id: usize, download: &mut Download) {
         peer_id, download.id
     );
 
-    let peer: &mut Peer = download.peer(peer_id);
+    let peer: &mut Peer = download.peer_mut(peer_id);
     let s: &mut TcpStream = peer
         .stream
         .as_mut()
@@ -508,7 +429,7 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
         }
         let mut to_process = Vec::new();
         let mut connections_to_reset: Vec<usize> = Vec::new();
-        for peer in download.peers() {
+        for peer in download.peers_mut() {
             match &peer.stream {
                 Some(stream) => loop {
                     println!("Getting message size... peer_id={}", peer_id);
@@ -559,7 +480,7 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
             process_message(msg.message, download, msg.peer_id);
         }
         for p in connections_to_reset {
-            download.peers()[p].stream = None;
+            download.peers_mut()[p].stream = None;
         }
     }
 }
@@ -567,7 +488,7 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
 fn process_message(message: Vec<u8>, download: &mut Download, peer_id: usize) {
     let resptype = message[0];
     println!("Response type: {}", resptype);
-    let mut peer = download.peer(peer_id);
+    let mut peer = download.peer_mut(peer_id);
     match resptype {
         0 => {
             println!("Choked! peer_id={}", peer_id);
@@ -625,7 +546,7 @@ fn on_request(message: Vec<u8>, download: &mut Download, peer_id: usize) {
     let mut data = vec![];
     file.take(length as u64).read_to_end(&mut data).unwrap();
 
-    let peer: &mut Peer = download.peer(peer_id);
+    let peer: &mut Peer = download.peer_mut(peer_id);
     let s: &mut TcpStream = peer
         .stream
         .as_mut()
@@ -662,6 +583,7 @@ fn on_piece(message: Vec<u8>, download: &mut Download, peer_id: usize) {
     file.write(&message[9..]).unwrap();
 
     download.pieces_mut()[pieceindex as usize].set_block_downloaded(block_id);
+    download.peer_mut(peer_id).outstanding_block_requests -= 1;
 
     check_if_piece_done(download, pieceindex as usize);
     check_if_done(download);
