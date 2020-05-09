@@ -100,6 +100,7 @@ fn e2e(
         restart_webtorrent()?;
     } else {
         restart_transmission(do_upload, do_download)?;
+        thread::sleep(time::Duration::from_secs(3));
         restart_rustorcli(do_upload, do_download)?;
     }
 
@@ -182,36 +183,51 @@ fn restart_transmission(
     Command::new("transmission-daemon")
         .arg("--download-dir")
         .arg(TRANSMISSION_DIRECTORY)
-        .spawn()
-        .expect("Failed to start transmission");
-    thread::sleep(time::Duration::from_secs(10));
+        .assert()
+        .success();
 
     println!("Deleting everything from transmission");
-    Command::new("transmission-remote")
-        .arg("-t")
-        .arg("all")
-        .arg("-r")
-        .spawn()
-        .expect("Failed to cleanup transmission-remote");
-    thread::sleep(time::Duration::from_secs(3));
+    run_until_success(
+        Command::new("transmission-remote")
+            .arg("-t")
+            .arg("all")
+            .arg("-r"),
+    );
 
     println!("Adding torrents to trasmission");
     if do_upload {
         Command::new("transmission-remote")
             .arg("-a")
             .arg("./data/torrent_a_data.torrent")
-            .spawn()
-            .expect("Failed to add torrent A to transmission");
+            .assert()
+            .success();
     }
     if do_download {
         Command::new("transmission-remote")
             .arg("-a")
             .arg("./data/torrent_b_data.torrent")
-            .spawn()
-            .expect("Failed to add torrent B to transmission");
+            .assert()
+            .success();
     }
 
     return Ok(());
+}
+
+fn run_until_success(command: &mut Command) {
+    let max_attempts = 10;
+    for attempt in 1..=max_attempts {
+        let output = command.output();
+        if output.is_ok() && output.unwrap().status.success() {
+            if attempt > 1 {
+                println!("The command succeeded after {} attempts", attempt);
+            }
+            return;
+        }
+        if attempt < max_attempts {
+            thread::sleep(Duration::from_secs(1));
+        }
+    }
+    panic!("Exceeded all attempts to run the command");
 }
 
 fn restart_webtorrent() -> Result<(), Box<dyn std::error::Error>> {
@@ -227,7 +243,6 @@ fn restart_webtorrent() -> Result<(), Box<dyn std::error::Error>> {
         .arg("tests/on-webtorrent-done.sh")
         .spawn()
         .expect("Failed to start webtorrent");
-    thread::sleep(time::Duration::from_secs(3));
     return Ok(());
 }
 

@@ -224,7 +224,14 @@ fn process_new_connections(
                         download.peers_mut()[response.peer_id].stream = Some(stream);
                         send_bitfield(response.peer_id, download);
                         send_unchoke(response.peer_id, download);
-                        if send_interested(&mut download.peers_mut()[response.peer_id].stream.as_mut().unwrap()).is_ok() {
+                        if send_interested(
+                            &mut download.peers_mut()[response.peer_id]
+                                .stream
+                                .as_mut()
+                                .unwrap(),
+                        )
+                        .is_ok()
+                        {
                             download.peer_mut(response.peer_id).we_interested = true;
                         };
                     }
