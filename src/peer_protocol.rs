@@ -32,11 +32,11 @@ pub fn process_message(message: Vec<u8>, download: &mut Download, peer_id: usize
         }
         4 => {
             println!("Have! peer_id={}", peer_id);
-            // TODO: do something
+            on_have(message, download, peer_id);
         }
         5 => {
             println!("Bitfield! peer_id={}", peer_id);
-            // TODO: do something
+            on_bitfield(message, download, peer_id);
         }
         6 => {
             println!("Request! peer_id={}", peer_id);
@@ -117,6 +117,41 @@ pub fn send_bitfield(peer_id: usize, download: &mut Download) {
         .expect("Expected the stream to be present");
 
     send_message(s, 5, &payload).unwrap();
+}
+
+fn on_bitfield(message: Vec<u8>, download: &mut Download, peer_id: usize) {
+    let num_pieces = download.pieces().len();
+
+    let mut has_piece = vec![false; num_pieces];
+    let mut has = 0;
+
+    for have_index in 0..num_pieces {
+        let bytes_index = have_index / 8;
+        let index_into_byte = have_index % 8;
+        let byte = message[1 + bytes_index];
+        let mask = 1 << (7 - index_into_byte);
+        let value = (byte & mask) != 0;
+        has_piece[have_index] = value;
+        if value {
+            has += 1;
+        }
+    }
+
+    println!(
+        "Received bitfield, download_id={}, peer_id={}, has={}/{}",
+        download.id, peer_id, has, num_pieces
+    );
+    download.peer_mut(peer_id).has_piece = has_piece;
+}
+
+fn on_have(message: Vec<u8>, download: &mut Download, peer_id: usize) {
+    let piece_id = io_primitives::bytes_to_u32(&message[1..=4]) as usize;
+
+    println!(
+        "Received have, download_id={}, peer_id={}, piece_id={}",
+        download.id, peer_id, piece_id
+    );
+    download.peer_mut(peer_id).has_piece[piece_id] = true;
 }
 
 pub fn send_unchoke(peer_id: usize, download: &mut Download) {

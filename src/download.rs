@@ -113,16 +113,19 @@ pub struct Peer {
     pub peer_info: Option<PeerInfo>,
 
     pub outstanding_block_requests: i32,
+
+    pub has_piece: Vec<bool>,
 }
 
 impl Peer {
-    pub fn new(stream: Option<TcpStream>, peer_info: Option<PeerInfo>) -> Peer {
+    pub fn new(stream: Option<TcpStream>, peer_info: Option<PeerInfo>, num_pieces: usize) -> Peer {
         Peer {
             stream: stream,
             peer_info: peer_info,
             we_interested: false,
             we_choked: true,
             outstanding_block_requests: 0,
+            has_piece: vec![false; num_pieces],
         }
     }
 }
@@ -187,12 +190,14 @@ impl Download {
     }
 
     pub fn register_outgoing_peer(&mut self, peer_info: PeerInfo) -> usize {
-        self.peers.push(Peer::new(None, Some(peer_info)));
+        self.peers
+            .push(Peer::new(None, Some(peer_info), self.pieces.len()));
         return self.peers.len() - 1;
     }
 
     pub fn register_incoming_peer(&mut self, stream: TcpStream) -> usize {
-        self.peers.push(Peer::new(Some(stream), None));
+        self.peers
+            .push(Peer::new(Some(stream), None, self.pieces.len()));
         return self.peers.len() - 1;
     }
 

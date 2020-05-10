@@ -36,7 +36,7 @@ pub fn decide_block_requests(download: &mut Download) -> Vec<BlockRequest> {
                 continue;
             }
 
-            if let Some(peer_id) = find_peer(&download, piece_id as u32, &added_in_this) {
+            if let Some(peer_id) = find_peer(&download, piece_id as usize, &added_in_this) {
                 result.push(BlockRequest {
                     block_id: block_id as usize,
                     download_id: download.id,
@@ -75,8 +75,7 @@ pub fn decide_incoming_block_requests(download: &mut Download) -> Vec<IncomingBl
     result
 }
 
-// TODO: check if peer has the piece
-fn find_peer(download: &Download, _piece_id: u32, added_in_this: &Vec<i32>) -> Option<usize> {
+fn find_peer(download: &Download, piece_id: usize, added_in_this: &Vec<i32>) -> Option<usize> {
     // let mut no_connection = 0;
     // let mut choked = 0;
     // let mut too_many_outstanding_requests = 0;
@@ -89,6 +88,9 @@ fn find_peer(download: &Download, _piece_id: u32, added_in_this: &Vec<i32>) -> O
         }
         if peer.we_choked {
             //choked += 1;
+            continue;
+        }
+        if !peer.has_piece[piece_id] {
             continue;
         }
         if peer.outstanding_block_requests + added_in_this[peer_index]

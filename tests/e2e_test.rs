@@ -26,8 +26,8 @@ mod e2e_tests {
     use std::io;
 
     static TEMP_DIRECTORY: &str = "./target/tmp/e2e";
-    static ATTEMPTS: u32 = 10;
-    static BETWEEN_ATTEMPTS: Duration = time::Duration::from_secs(10);
+    static ATTEMPTS: u32 = 100;
+    static BETWEEN_ATTEMPTS: Duration = time::Duration::from_secs(1);
 
     // TODO: version control test files, or generate them on the fly
     // TODO: don't ignore, somehow
@@ -177,8 +177,11 @@ mod e2e_tests {
             client.client_type.stop_and_cleanup();
         }
 
-        for client in definition.clients.iter() {
+        for (i, client) in definition.clients.iter().enumerate() {
             client.start();
+            if i != definition.clients.len() - 1 {
+                thread::sleep(Duration::from_secs(3));
+            }
         }
 
         for attempt in 1..=ATTEMPTS {
