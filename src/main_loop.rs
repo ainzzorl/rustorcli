@@ -10,8 +10,8 @@ use serde_bytes::ByteBuf;
 use std::{thread, time};
 
 use serde_bencode::de;
+use std::io;
 use std::io::Write;
-use std::io::{self, Read};
 
 use percent_encoding::percent_encode_byte;
 
@@ -19,21 +19,16 @@ use failure::Error;
 
 use std::net::{TcpListener, TcpStream};
 
-use std::io::Seek;
-use std::io::SeekFrom;
-
 extern crate crypto;
 
 extern crate hex;
-
-use self::crypto::digest::Digest;
 
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 
 use crate::announcement::PeerInfo;
 use crate::decider::*;
-use crate::download::{Download, IncomingBlockRequest, Peer};
+use crate::download::Download;
 use crate::io_primitives;
 use crate::io_primitives::read_n;
 use crate::outgoing_connections::*;
@@ -50,17 +45,6 @@ struct Announcement {
 struct AnnouncementAltPeers {
     interval: i64,
     peers: ByteBuf,
-}
-
-pub type Sha1 = Vec<u8>;
-
-pub fn calculate_sha1(input: &[u8]) -> Sha1 {
-    let mut hasher = crypto::sha1::Sha1::new();
-    hasher.input(input);
-
-    let mut buf: Vec<u8> = vec![0; hasher.output_bytes()];
-    hasher.result(&mut buf);
-    buf
 }
 
 fn reload_config(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: bool) {
@@ -135,8 +119,8 @@ fn handle_incoming_connection(
                     found = true;
                     s.set_nonblocking(true).unwrap();
                     let peer_index = download.register_incoming_peer(s);
-                    send_bitfield(peer_index, download);
-                    send_unchoke(peer_index, download);
+                    peer_protocol::send_bitfield(peer_index, download);
+                    peer_protocol::send_unchoke(peer_index, download);
                     println!("Done adding the connection to download");
                     break;
                 }
@@ -223,9 +207,9 @@ fn process_new_connections(
                             .get_mut(&(response.download_id as u32))
                             .expect("Download must exist");
                         download.peers_mut()[response.peer_id].stream = Some(stream);
-                        send_bitfield(response.peer_id, download);
-                        send_unchoke(response.peer_id, download);
-                        if send_interested(
+                        peer_protocol::send_bitfield(response.peer_id, download);
+                        peer_protocol::send_unchoke(response.peer_id, download);
+                        if peer_protocol::send_interested(
                             &mut download.peers_mut()[response.peer_id]
                                 .stream
                                 .as_mut()
@@ -313,7 +297,7 @@ fn execute_outgoing_block_requests(downloads: &mut HashMap<u32, Download>) {
                 .expect("Expected the stream to be present");
 
             if !peer.we_interested {
-                if send_interested(stream).is_err() {
+                if peer_protocol::send_interested(stream).is_err() {
                     println!(
                         "Couldn't send interested - resetting connection with peer_id={}",
                         request.peer_id
@@ -326,7 +310,7 @@ fn execute_outgoing_block_requests(downloads: &mut HashMap<u32, Download>) {
                 println!("We are already interested in the peer");
             }
 
-            if request_block(
+            if peer_protocol::request_block(
                 &mut download,
                 request.piece_id,
                 request.block_id,
@@ -360,92 +344,9 @@ fn execute_incoming_block_requests(downloads: &mut HashMap<u32, Download>) {
         );
 
         for request in requests {
-            send_block(download, &request);
+            peer_protocol::send_block(download, &request);
         }
     }
-}
-
-fn send_interested(stream: &mut TcpStream) -> Result<(), std::io::Error> {
-    println!("Sending interested");
-    return send_message(stream, 2, &Vec::new());
-}
-
-fn request_block(
-    download: &mut Download,
-    piece_id: usize,
-    block_id: usize,
-    peer_id: usize,
-) -> Result<(), std::io::Error> {
-    let block = &download.pieces()[piece_id].blocks()[block_id];
-
-    println!(
-        "Requesting download_id={}, peer_id={}, block={} from piece_id={}, offset={}, len={}",
-        download.id,
-        peer_id,
-        block_id,
-        piece_id,
-        block.offset(),
-        block.len()
-    );
-
-    let mut payload: Vec<u8> = Vec::new();
-    payload.extend(io_primitives::u32_to_bytes(piece_id as u32));
-    payload.extend(io_primitives::u32_to_bytes(block.offset() as u32));
-    payload.extend(io_primitives::u32_to_bytes(block.len() as u32));
-    send_message(
-        download.peers_mut()[peer_id]
-            .stream
-            .as_mut()
-            .expect("Expect the stream to be present"),
-        6,
-        &payload,
-    )?;
-
-    println!("Done requesting block");
-    return Ok(());
-}
-
-// TODO: move to Download
-fn send_bitfield(peer_id: usize, download: &mut Download) {
-    println!(
-        "Sending bitfield to peer_id={}, download_id={}",
-        peer_id, download.id
-    );
-
-    let num_pieces = download.pieces().len();
-
-    let mut payload: Vec<u8> = vec![0; (num_pieces as f64 / 8 as f64).ceil() as usize];
-    for have_index in 0..num_pieces {
-        let bytes_index = have_index / 8;
-        let index_into_byte = have_index % 8;
-        if download.pieces()[have_index].downloaded() {
-            let mask = 1 << (7 - index_into_byte);
-            payload[bytes_index] |= mask;
-        }
-    }
-
-    let peer: &mut Peer = download.peer_mut(peer_id);
-    let s: &mut TcpStream = peer
-        .stream
-        .as_mut()
-        .expect("Expected the stream to be present");
-
-    send_message(s, 5, &payload).unwrap();
-}
-
-fn send_unchoke(peer_id: usize, download: &mut Download) {
-    println!(
-        "Sending unchoked to peer_id={}, download_id={}",
-        peer_id, download.id
-    );
-
-    let peer: &mut Peer = download.peer_mut(peer_id);
-    let s: &mut TcpStream = peer
-        .stream
-        .as_mut()
-        .expect("Expected the stream to be present");
-
-    send_message(s, 1, &Vec::new()).unwrap();
 }
 
 fn receive_messages(downloads: &mut HashMap<u32, Download>) {
@@ -513,32 +414,6 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
             download.peers_mut()[p].stream = None;
         }
     }
-}
-
-fn send_block(download: &mut Download, request: &IncomingBlockRequest) {
-    let mut file = &download.file;
-
-    let seek_pos: u64 = ((request.piece_id as i64) * (download.piece_length as i64)
-        + (request.begin as i64)) as u64;
-    file.seek(SeekFrom::Start(seek_pos)).unwrap();
-
-    let mut data = vec![];
-    file.take(request.length as u64)
-        .read_to_end(&mut data)
-        .unwrap();
-
-    let peer: &mut Peer = download.peer_mut(request.peer_id);
-    let s: &mut TcpStream = peer
-        .stream
-        .as_mut()
-        .expect("Expected the stream to be present");
-
-    let mut payload: Vec<u8> = Vec::new();
-    payload.extend(io_primitives::u32_to_bytes(request.piece_id as u32));
-    payload.extend(io_primitives::u32_to_bytes(request.begin as u32));
-    payload.extend(data);
-
-    send_message(s, 7, &payload).unwrap();
 }
 
 pub fn start_listeners(port: u16) -> TcpListener {
@@ -682,18 +557,4 @@ fn handshake_incoming(stream: &mut TcpStream, my_id: &String) -> Result<Vec<u8>,
     stream.write_all(warr)?;
 
     return Ok(in_info_hash);
-}
-
-fn send_message(
-    stream: &mut TcpStream,
-    msgtype: u8,
-    payload: &Vec<u8>,
-) -> Result<(), std::io::Error> {
-    let mut payload_with_type: Vec<u8> = Vec::new();
-    payload_with_type.push(msgtype);
-    payload_with_type.extend(payload);
-    let mut to_write: Vec<u8> = Vec::new();
-    to_write.extend(io_primitives::u32_to_bytes(payload_with_type.len() as u32));
-    to_write.extend(payload_with_type);
-    return stream.write_all(&to_write);
 }
