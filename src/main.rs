@@ -9,7 +9,7 @@ pub mod decider;
 pub mod download;
 pub mod handshake;
 pub mod io_primitives;
-pub mod orchestration;
+pub mod main_loop;
 pub mod outgoing_connections;
 pub mod peer_protocol;
 pub mod torrent_entries;
@@ -140,7 +140,7 @@ fn start(pid_opt: Option<i32>, is_local: bool) {
 }
 
 fn run(is_local: bool) {
-    orchestration::start(is_local);
+    main_loop::start(is_local);
 }
 
 fn stop(pid_opt: Option<i32>) {
