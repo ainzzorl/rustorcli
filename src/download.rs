@@ -13,7 +13,7 @@ use std::net::TcpStream;
 use std::path::Path;
 
 use std::cmp::min;
-
+use std::collections::VecDeque;
 use std::io::Read;
 use std::io::Seek;
 use std::io::SeekFrom;
@@ -49,6 +49,8 @@ pub struct Download {
     pieces: Vec<Piece>,
 
     pub info_hash: Vec<u8>,
+
+    pub pending_block_requests: VecDeque<IncomingBlockRequest>,
 }
 
 pub struct Piece {
@@ -70,6 +72,13 @@ pub struct Block {
 pub struct BlockRequestRecord {
     pub peer_id: usize,
     pub time: std::time::SystemTime,
+}
+
+pub struct IncomingBlockRequest {
+    pub peer_id: usize,
+    pub begin: usize,
+    pub length: usize,
+    pub piece_id: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -173,6 +182,7 @@ impl Download {
             length: torrent_serializable.info.length,
             pieces: pieces,
             info_hash: torrent_serializable.info_hash,
+            pending_block_requests: VecDeque::new(),
         }
     }
 
@@ -208,6 +218,16 @@ impl Download {
 
     pub fn pieces_mut(&mut self) -> &mut Vec<Piece> {
         &mut self.pieces
+    }
+
+    pub fn add_incoming_block_request(&mut self, request: IncomingBlockRequest) {
+        self.pending_block_requests.push_back(request);
+    }
+
+    pub fn set_block_downloaded(&mut self, piece_id: usize, block_id: usize) {
+        self.pieces[piece_id].set_block_downloaded(block_id);
+        self.check_if_piece_done(piece_id);
+        self.check_if_done();
     }
 
     fn init_pieces(torrent_serializable: &TorrentSerializable, file: &mut File) -> Vec<Piece> {
@@ -288,6 +308,80 @@ impl Download {
         }
 
         return pieces;
+    }
+
+    pub fn check_if_piece_done(&mut self, piece_id: usize) {
+        let piece = &self.pieces()[piece_id];
+        if !piece.downloaded() {
+            return;
+        }
+        println!("Piece {} seems to be downloaded...", piece_id);
+
+        let mut file = &self.file;
+
+        file.seek(std::io::SeekFrom::Start(piece.offset().into()))
+            .unwrap();
+        let mut data = vec![];
+        file.take(self.piece_length as u64)
+            .read_to_end(&mut data)
+            .unwrap();
+
+        let expected_hash = self.pieces()[piece_id].sha();
+
+        let actual_hash = calculate_sha1(&data);
+
+        let is_complete = *expected_hash == actual_hash;
+        if is_complete {
+            println!("Hashes match for piece {}", piece_id);
+        } else {
+            panic!(
+                "Hashes don't match for piece {}. Expected: {}, actual: {}",
+                piece_id,
+                hex::encode(expected_hash),
+                hex::encode(actual_hash)
+            );
+            // TODO: do something smarter, e.g. retry
+        }
+    }
+
+    fn check_if_done(&self) {
+        if self.is_done() {
+            self.on_done();
+        }
+    }
+
+    fn on_done(&self) {
+        println!("Download is done!");
+        let dest = format!("{}/{}", self.download_path, self.name);
+        println!("Moving {} to {}", self.temp_location, dest);
+        fs::rename(&self.temp_location, dest).unwrap();
+    }
+
+    fn is_done(&self) -> bool {
+        println!("Checking if the download is done...");
+        let mut num_blocks = 0;
+        let mut downloaded_blocks = 0;
+        let mut missing: String = String::from("");
+
+        for p_id in 0..self.pieces().len() {
+            let p = &self.pieces()[p_id];
+            for b_id in 0..p.blocks().len() {
+                let b = p.blocks()[b_id].downloaded();
+                num_blocks += 1;
+                if b {
+                    downloaded_blocks += 1;
+                } else {
+                    missing = format!("piece={}, block={}", p_id, b_id);
+                }
+            }
+        }
+        if num_blocks != downloaded_blocks {
+            println!(
+                "Not yet done: downloaded {}/{} blocks. E.g. missing: {}",
+                downloaded_blocks, num_blocks, missing
+            );
+        }
+        return num_blocks == downloaded_blocks;
     }
 }
 

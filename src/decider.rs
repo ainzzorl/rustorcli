@@ -1,6 +1,6 @@
 use std::time::{Duration, SystemTime};
 
-use crate::download::{BlockRequestRecord, Download};
+use crate::download::{BlockRequestRecord, Download, IncomingBlockRequest};
 
 static REQUEST_EXPIRATION: Duration = Duration::from_secs(30);
 static MAX_OUTSTANDING_REQUESTS_PER_PEER: i32 = 10;
@@ -60,6 +60,19 @@ pub fn decide_block_requests(download: &mut Download) -> Vec<BlockRequest> {
     }
 
     return result;
+}
+
+pub fn decide_incoming_block_requests(download: &mut Download) -> Vec<IncomingBlockRequest> {
+    // TODO: be smarter!
+    // TODO: check if we have it
+    // TODO: not all at once
+
+    let mut result = Vec::new();
+    while !download.pending_block_requests.is_empty() {
+        result.push(download.pending_block_requests.pop_front().unwrap());
+    }
+
+    result
 }
 
 // TODO: check if peer has the piece

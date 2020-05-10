@@ -25,7 +25,7 @@ cleanup:
 			 # TODO: other OS
 			 rm -rf "$$HOME/Library/Application Support/rustorcli/"
 
-test-all: test e2e
+test-all: test e2e cleanup
 
 run-current:
 			 mkdir -p target/tmp/current
