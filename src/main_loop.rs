@@ -142,45 +142,36 @@ fn request_connections(
     outx: Sender<OpenConnectionRequest>,
 ) {
     for (download_id, download) in downloads {
-        for peer_index in 0..download.peers_mut().len() {
-            if download
-                .peers()
-                .get(peer_index)
-                .expect("expected peer to be in the vec")
-                .stream
-                .is_none()
-            {
-                let peer = download
-                    .peers()
-                    .get(peer_index)
-                    .expect("Expected peer to be in the list");
-
-                if peer.peer_info.is_none() {
-                    continue;
-                }
-
-                let peer_info = peer.peer_info.as_ref().unwrap();
-
-                if peer_info.port == 6881 {
-                    // Don't connect to self.
-                    // TODO: use id instead.
-                    continue;
-                }
-
-                println!(
-                    "Requesting connection through the channel. peer_id={}, download_id={}",
-                    peer_index, download_id
-                );
-                outx.send(OpenConnectionRequest {
-                    ip: peer_info.ip.clone(),
-                    port: peer_info.port.clone(),
-                    my_id: my_id.clone(),
-                    peer_id: peer_index,
-                    download_id: *download_id as usize,
-                    info_hash: download.info_hash.clone(),
-                })
-                .expect("Expected send to succeed");
+        let info_hash = download.info_hash.clone();
+        for (peer_id, peer) in download.peers_mut().iter().enumerate() {
+            if !peer.stream.is_none() {
+                continue;
             }
+            if peer.peer_info.is_none() {
+                continue;
+            }
+
+            let peer_info = peer.peer_info.as_ref().unwrap();
+
+            if peer_info.port == 6881 {
+                // Don't connect to self.
+                // TODO: use id instead.
+                continue;
+            }
+
+            println!(
+                "Requesting connection through the channel. peer_id={}, download_id={}",
+                peer_id, download_id
+            );
+            outx.send(OpenConnectionRequest {
+                ip: peer_info.ip.clone(),
+                port: peer_info.port.clone(),
+                my_id: my_id.clone(),
+                peer_id: peer_id,
+                download_id: *download_id as usize,
+                info_hash: info_hash.clone(),
+            })
+            .expect("Expected send to succeed");
         }
     }
 }
