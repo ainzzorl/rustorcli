@@ -101,7 +101,7 @@ fn find_peer(download: &Download, piece_id: usize, added_in_this: &Vec<i32>) -> 
         }
         return Some(peer_index);
     }
-    // println!(
+    // info!(
     //     "Did not find appropriate peer. No connection: {}, choked: {}, too-many-outstanding: {}",
     //     no_connection, choked, too_many_outstanding_requests
     // );

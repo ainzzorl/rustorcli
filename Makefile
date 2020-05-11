@@ -1,20 +1,20 @@
 test :
-			 cargo test -- --test-threads=1
+			 RUST_BACKTRACE=1 RUST_LOG=rustorcli=trace cargo test -- --test-threads=1
 
 e2e-incoming :
-			 RUST_BACKTRACE=1 cargo test e2e_incoming_with_webtorrent -- --nocapture --ignored
+			 RUST_BACKTRACE=1 RUST_LOG=rustorcli=trace cargo test e2e_incoming_with_webtorrent -- --nocapture --ignored
 			 cargo run stop
 
 e2e-outgoing-with-transmission :
-			 RUST_BACKTRACE=1 cargo test e2e_outgoing_with_transmission -- --nocapture --ignored
+			 RUST_BACKTRACE=1 RUST_LOG=rustorcli=trace cargo test e2e_outgoing_with_transmission -- --nocapture --ignored
 			 cargo run stop
 
 e2e-outgoing-three-way :
-			 RUST_BACKTRACE=1 cargo test e2e_outgoing_three_way -- --nocapture --ignored
+			 RUST_BACKTRACE=1 RUST_LOG=rustorcli=trace cargo test e2e_outgoing_three_way -- --nocapture --ignored
 			 cargo run stop
 
 e2e :
-	RUST_BACKTRACE=1 cargo test e2e_tests -- --test-threads=1 --nocapture --ignored
+	RUST_BACKTRACE=1 RUST_LOG=rustorcli=trace cargo test e2e_tests -- --test-threads=1 --nocapture --ignored
 
 cleanup:
 			 cargo run stop
@@ -32,4 +32,4 @@ run-current:
 			 cargo run stop
 			 rm -rf "$$HOME/Library/Application Support/rustorcli/"
 			 cargo run add -t "$$(pwd)/data/current.torrent" -d "$$(pwd)/target/tmp/current"
-			 cargo run start
+			 RUST_LOG=trace cargo run start

@@ -1,4 +1,5 @@
 use failure::Error;
+use log::*;
 use std::net::SocketAddr;
 use std::net::TcpStream;
 use std::sync::mpsc::{Receiver, Sender};
@@ -28,7 +29,7 @@ pub fn open_missing_connections(
     inx: Receiver<OpenConnectionRequest>,
     outx: Sender<OpenConnectionResponse>,
 ) {
-    println!("In open_missing_connections");
+    info!("In open_missing_connections");
 
     loop {
         let request_opt = inx.recv();
@@ -46,12 +47,12 @@ pub fn open_missing_connections(
         }; // TODO: remove this
 
         let address = format!("{}:{}", ip, request.port);
-        println!("Trying to open missing connection; address={}", address);
+        info!("Trying to open missing connection; address={}", address);
         let socket_address: SocketAddr = address.parse().expect("Unable to parse socket address");
 
         match TcpStream::connect_timeout(&socket_address, Duration::from_secs(1)) {
             Ok(mut stream) => {
-                println!("Connected to the peer!");
+                info!("Connected to the peer!");
                 match handshake(&mut stream, &request.info_hash, &request.my_id) {
                     Ok(()) => {
                         stream.set_nonblocking(true).unwrap();
@@ -63,13 +64,13 @@ pub fn open_missing_connections(
                         .unwrap();
                     }
                     Err(e) => {
-                        println!("Handshake failure: {:?}", e);
+                        info!("Handshake failure: {:?}", e);
                         outx.send(Err(Error::from(e))).unwrap();
                     }
                 }
             }
             Err(e) => {
-                println!("Could not connect to peer: {:?}", e);
+                info!("Could not connect to peer: {:?}", e);
                 outx.send(Err(Error::from(e))).unwrap();
             }
         }

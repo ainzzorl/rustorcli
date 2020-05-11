@@ -4,6 +4,8 @@ extern crate serde_derive;
 extern crate daemonize;
 extern crate sysinfo;
 
+//#[macro_use] extern crate log;
+
 pub mod announcement;
 pub mod decider;
 pub mod download;
@@ -140,6 +142,10 @@ fn start(pid_opt: Option<i32>, is_local: bool) {
 }
 
 fn run(is_local: bool) {
+    let mut builder = env_logger::Builder::from_default_env();
+    builder.target(env_logger::Target::Stdout);
+    builder.init();
+
     main_loop::start(is_local);
 }
 

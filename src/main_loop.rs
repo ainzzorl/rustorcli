@@ -26,6 +26,8 @@ extern crate hex;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 
+use log::*;
+
 use crate::announcement::PeerInfo;
 use crate::decider::*;
 use crate::download::Download;
@@ -49,10 +51,10 @@ struct AnnouncementAltPeers {
 
 fn reload_config(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: bool) {
     let entries = torrent_entries::list_torrents();
-    println!("Reloading config. Entries: {}", entries.len());
+    info!("Reloading config. Entries: {}", entries.len());
     for entry in entries {
         if !downloads.contains_key(&entry.id) {
-            println!("Adding entry, id={}", entry.id);
+            info!("Adding entry, id={}", entry.id);
 
             let download = to_download(&entry, my_id, is_local);
 
@@ -75,11 +77,11 @@ fn to_download(entry: &torrent_entries::TorrentEntry, my_id: &String, is_local: 
 }
 
 pub fn start(is_local: bool) {
-    println!("Starting orchestration");
+    info!("Starting orchestration");
     // TODO: consistent id
     // TODO: encode client name
     let my_id: String = thread_rng().sample_iter(&Alphanumeric).take(20).collect();
-    println!("My id: {}", my_id);
+    info!("My id: {}", my_id);
 
     let mut downloads: HashMap<u32, Download> = HashMap::new();
     main_loop(&mut downloads, &my_id, is_local);
@@ -90,7 +92,7 @@ fn receive_incoming_connections(
     my_id: &String,
     downloads: &mut HashMap<u32, Download>,
 ) {
-    println!("Receiving incoming connections");
+    info!("Receiving incoming connections");
 
     match tcp_listener.accept() {
         Ok((s, _addr)) => handle_incoming_connection(s, my_id, downloads),
@@ -106,32 +108,32 @@ fn handle_incoming_connection(
     downloads: &mut HashMap<u32, Download>,
 ) {
     let mut s = stream;
-    println!("Incoming connection!");
+    info!("Incoming connection!");
     match handshake_incoming(&mut s, my_id) {
         Ok(info_hash) => {
-            println!("Successful incoming handshake!!!");
+            info!("Successful incoming handshake!!!");
 
             let mut found = false;
             for (download_id, download) in downloads {
                 let d_info_hash = &download.info_hash;
                 if *d_info_hash == info_hash {
-                    println!("Found corresponding download, download_id={}", download_id);
+                    info!("Found corresponding download, download_id={}", download_id);
                     found = true;
                     s.set_nonblocking(true).unwrap();
                     let peer_index = download.register_incoming_peer(s);
                     peer_protocol::send_bitfield(peer_index, download);
                     peer_protocol::send_unchoke(peer_index, download);
-                    println!("Done adding the connection to download");
+                    info!("Done adding the connection to download");
                     break;
                 }
             }
 
             if !found {
-                println!("Did not find corresponding download!");
+                info!("Did not find corresponding download!");
             }
         }
         Err(e) => {
-            println!("Handshake failure: {:?}", e);
+            info!("Handshake failure: {:?}", e);
         }
     }
 }
@@ -159,7 +161,7 @@ fn request_connections(
                 continue;
             }
 
-            println!(
+            info!(
                 "Requesting connection through the channel. peer_id={}, download_id={}",
                 peer_id, download_id
             );
@@ -181,14 +183,14 @@ fn process_new_connections(
     downloads: &mut HashMap<u32, Download>,
     inx: &Receiver<OpenConnectionResponse>,
 ) {
-    println!("Processing established connections");
+    info!("Processing established connections");
 
     loop {
         match inx.try_recv() {
             Ok(response_res) => {
                 match response_res {
                     Ok(response) => {
-                        println!(
+                        info!(
                             "Received established connection. download_id={}, peer_id={}",
                             response.download_id, response.peer_id
                         );
@@ -213,7 +215,7 @@ fn process_new_connections(
                     }
                     Err(e) => {
                         // TODO: message should include details!
-                        println!("Failed to establish connection, {:?}", e);
+                        info!("Failed to establish connection, {:?}", e);
                     }
                 }
             }
@@ -250,10 +252,10 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: b
     request_connections(downloads, &my_id, open_connections_request_sender);
 
     loop {
-        println!("Main loop iteration #{}", iteration);
+        info!("Main loop iteration #{}", iteration);
 
         if iteration % 100 == 0 {
-            println!("Reloading config on iteration {}", iteration);
+            info!("Reloading config on iteration {}", iteration);
             reload_config(downloads, &my_id, is_local);
         }
 
@@ -273,7 +275,7 @@ fn execute_outgoing_block_requests(downloads: &mut HashMap<u32, Download>) {
     for d in downloads.values_mut() {
         let mut download: &mut Download = d;
         let requests = decide_block_requests(download);
-        println!(
+        info!(
             "Executing outgoing {} requests for download_id={}",
             requests.len(),
             download.id
@@ -289,7 +291,7 @@ fn execute_outgoing_block_requests(downloads: &mut HashMap<u32, Download>) {
 
             if !peer.we_interested {
                 if peer_protocol::send_interested(stream).is_err() {
-                    println!(
+                    info!(
                         "Couldn't send interested - resetting connection with peer_id={}",
                         request.peer_id
                     );
@@ -298,7 +300,7 @@ fn execute_outgoing_block_requests(downloads: &mut HashMap<u32, Download>) {
                 }
                 peer.we_interested = true;
             } else {
-                println!("We are already interested in the peer");
+                info!("We are already interested in the peer");
             }
 
             if peer_protocol::request_block(
@@ -309,7 +311,7 @@ fn execute_outgoing_block_requests(downloads: &mut HashMap<u32, Download>) {
             )
             .is_err()
             {
-                println!(
+                info!(
                     "Couldn't request piece - resetting connection with peer_id={}",
                     request.peer_id
                 );
@@ -328,7 +330,7 @@ fn execute_incoming_block_requests(downloads: &mut HashMap<u32, Download>) {
     for d in downloads.values_mut() {
         let download: &mut Download = d;
         let requests = decide_incoming_block_requests(download);
-        println!(
+        info!(
             "Executing incoming {} requests for download_id={}",
             requests.len(),
             download.id
@@ -341,7 +343,7 @@ fn execute_incoming_block_requests(downloads: &mut HashMap<u32, Download>) {
 }
 
 fn receive_messages(downloads: &mut HashMap<u32, Download>) {
-    println!("Receiving messages connections");
+    info!("Receiving messages connections");
     for download in downloads.values_mut() {
         let mut peer_id: usize = 0;
 
@@ -354,15 +356,15 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
         for peer in download.peers_mut() {
             match &peer.stream {
                 Some(stream) => loop {
-                    println!("Getting message size... peer_id={}", peer_id);
+                    info!("Getting message size... peer_id={}", peer_id);
                     match read_n(&stream, 4, false) {
                         Ok(sizebytes) => {
                             let message_size = io_primitives::bytes_to_u32(&sizebytes);
-                            println!("Message size: {}", message_size);
+                            info!("Message size: {}", message_size);
                             if message_size == 0 {
-                                println!("Looks like keepalive");
+                                info!("Looks like keepalive");
                             } else {
-                                println!("Reading message payload...");
+                                info!("Reading message payload...");
                                 match read_n(&stream, message_size, true) {
                                     Ok(message) => {
                                         to_process.push(Msg {
@@ -372,7 +374,7 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
                                         break;
                                     }
                                     Err(e) => {
-                                        println!(
+                                        info!(
                                             "Error reading message from peer_id={}: {:?}, resetting connection",
                                             peer_id, e);
                                         connections_to_reset.push(peer_id);
@@ -382,11 +384,11 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
                             }
                         }
                         Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                            println!("Would-block error from peer_id={}: {:?}", peer_id, e);
+                            info!("Would-block error from peer_id={}: {:?}", peer_id, e);
                             break;
                         }
                         Err(e) => {
-                            println!("Unexpected error from peer_id={}: {:?}", peer_id, e);
+                            info!("Unexpected error from peer_id={}: {:?}", peer_id, e);
                             break;
                         }
                     }
@@ -408,11 +410,11 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
 }
 
 pub fn start_listeners(port: u16) -> TcpListener {
-    println!("Starting to listen on port {}", port);
+    info!("Starting to listen on port {}", port);
     let tcp_listener = TcpListener::bind(format!("0.0.0.0:{}", port)).unwrap();
     tcp_listener.set_nonblocking(true).unwrap();
     let listen_addr = tcp_listener.local_addr().unwrap();
-    println!("Listener started on {}", listen_addr);
+    info!("Listener started on {}", listen_addr);
     return tcp_listener;
 }
 
@@ -443,7 +445,7 @@ fn get_announcement(
 
     let url = request.url();
     let url = format!("{}&info_hash={}", url, urlencodedih);
-    println!("Announcement URL: {}", url);
+    info!("Announcement URL: {}", url);
 
     let mut req_builder = client.get(&url);
     if is_local {
@@ -453,26 +455,26 @@ fn get_announcement(
     let mut buffer: Vec<u8> = vec![];
     response.copy_to(&mut buffer)?;
 
-    println!("Tracker response: {}", show(&buffer));
+    info!("Tracker response: {}", show(&buffer));
 
     let announcement: Announcement;
 
     match de::from_bytes::<Announcement>(&buffer) {
         Ok(t) => announcement = t,
         Err(e) => {
-            println!(
+            info!(
                 "Could not parse tracker response: {:?}. Tring alternative structure...",
                 e
             );
             match de::from_bytes::<AnnouncementAltPeers>(&buffer) {
                 Ok(announcement_alt) => {
-                    println!("Managed to parse alternative announcement!");
+                    info!("Managed to parse alternative announcement!");
                     let peers = announcement_alt.peers;
                     let num_peers = peers.len() / 6;
                     let mut peers_parsed: Vec<PeerInfo> = vec![];
                     for i in 0..num_peers {
-                        println!("peer_id=#{}", i);
-                        println!(
+                        info!("peer_id=#{}", i);
+                        info!(
                             "{}.{}.{}.{}:{}",
                             peers[i * 6],
                             peers[i * 6 + 1],
@@ -508,10 +510,10 @@ fn get_announcement(
         }
     }
 
-    println!("Num peers: {}", announcement.peers.len());
+    info!("Num peers: {}", announcement.peers.len());
 
     for peer in &announcement.peers {
-        println!("Peer - {}:{}", peer.ip, peer.port);
+        info!("Peer - {}:{}", peer.ip, peer.port);
     }
 
     return Ok(announcement);
@@ -527,7 +529,7 @@ fn show(bs: &Vec<u8>) -> String {
 }
 
 fn handshake_incoming(stream: &mut TcpStream, my_id: &String) -> Result<Vec<u8>, std::io::Error> {
-    println!("Starting handshake...");
+    info!("Starting handshake...");
 
     let pstrlen = read_n(stream, 1, true)?;
     read_n(stream, pstrlen[0] as u32, true)?;

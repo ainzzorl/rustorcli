@@ -29,6 +29,8 @@ use ring::digest;
 
 use serde_bencode::value::Value;
 
+use log::*;
+
 use crate::announcement::PeerInfo;
 use crate::torrent_entries;
 
@@ -141,7 +143,7 @@ impl Download {
         let mut file: File;
 
         if !Path::new(&temp_location).exists() && !Path::new(&final_location).exists() {
-            println!("Creating temp file: {}", &temp_location);
+            info!("Creating temp file: {}", &temp_location);
             match fs::OpenOptions::new()
                 .create(true)
                 .read(true)
@@ -238,7 +240,7 @@ impl Download {
     fn init_pieces(torrent_serializable: &TorrentSerializable, file: &mut File) -> Vec<Piece> {
         let piece_infos = parse_pieces(&torrent_serializable);
 
-        println!("In init_pieces");
+        info!("In init_pieces");
         let num_pieces = piece_infos.len();
 
         let mut pieces = Vec::new();
@@ -251,7 +253,7 @@ impl Download {
                 let standard_piece_length = piece_length;
                 let in_previous = standard_piece_length * ((num_pieces - 1) as i64);
                 let remaining = torrent_serializable.info.length - in_previous;
-                println!(
+                info!(
                     "Remaining in last piece = {} = {} - {} = {} - {} * {}",
                     remaining,
                     torrent_serializable.info.length,
@@ -283,7 +285,7 @@ impl Download {
             let actual_hash = calculate_sha1(&data);
 
             let have_this_piece = expected_hash == actual_hash;
-            println!("Have piece_id={}? {}", piece_id, have_this_piece);
+            info!("Have piece_id={}? {}", piece_id, have_this_piece);
 
             let num_blocks = ((piece_length as f64) / (block_size as f64)).ceil() as usize;
 
@@ -320,7 +322,7 @@ impl Download {
         if !piece.downloaded() {
             return;
         }
-        println!("Piece {} seems to be downloaded...", piece_id);
+        info!("Piece {} seems to be downloaded...", piece_id);
 
         let mut file = &self.file;
 
@@ -337,7 +339,7 @@ impl Download {
 
         let is_complete = *expected_hash == actual_hash;
         if is_complete {
-            println!("Hashes match for piece {}", piece_id);
+            info!("Hashes match for piece {}", piece_id);
         } else {
             panic!(
                 "Hashes don't match for piece {}. Expected: {}, actual: {}",
@@ -356,14 +358,14 @@ impl Download {
     }
 
     fn on_done(&self) {
-        println!("Download is done!");
+        info!("Download is done!");
         let dest = format!("{}/{}", self.download_path, self.name);
-        println!("Moving {} to {}", self.temp_location, dest);
+        info!("Moving {} to {}", self.temp_location, dest);
         fs::rename(&self.temp_location, dest).unwrap();
     }
 
     fn is_done(&self) -> bool {
-        println!("Checking if the download is done...");
+        info!("Checking if the download is done...");
         let mut num_blocks = 0;
         let mut downloaded_blocks = 0;
         let mut missing: String = String::from("");
@@ -381,7 +383,7 @@ impl Download {
             }
         }
         if num_blocks != downloaded_blocks {
-            println!(
+            info!(
                 "Not yet done: downloaded {}/{} blocks. E.g. missing: {}",
                 downloaded_blocks, num_blocks, missing
             );
@@ -464,7 +466,7 @@ fn calculate_sha1(input: &[u8]) -> Sha1 {
 }
 
 fn parse_pieces(torrent: &TorrentSerializable) -> Vec<PieceInfo> {
-    println!("Parsing pieces...");
+    info!("Parsing pieces...");
     let mut piece_infos = Vec::new();
 
     for piece_id in 0..(torrent.info.pieces.len() / 20) {
@@ -477,13 +479,13 @@ fn parse_pieces(torrent: &TorrentSerializable) -> Vec<PieceInfo> {
             sha: bts.to_vec(),
         })
     }
-    println!("Total pieces: {}", piece_infos.len());
+    info!("Total pieces: {}", piece_infos.len());
 
     return piece_infos;
 }
 
 fn read_torrent(path: &String) -> TorrentSerializable {
-    println!("Reading torrent file from path: {}", path);
+    info!("Reading torrent file from path: {}", path);
     let mut f = File::open(&path).expect("no file found");
     let metadata = fs::metadata(&path).expect("unable to read metadata");
     let mut buffer = vec![0; metadata.len() as usize];

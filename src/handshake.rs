@@ -1,6 +1,8 @@
 use std::io::Write;
 use std::net::TcpStream;
 
+use log::*;
+
 use crate::io_primitives::read_n;
 
 pub fn handshake(
@@ -8,7 +10,7 @@ pub fn handshake(
     info_hash: &Vec<u8>,
     my_id: &String,
 ) -> Result<(), std::io::Error> {
-    println!("Starting handshake...");
+    info!("Starting handshake...");
     let mut to_write: Vec<u8> = Vec::new();
     to_write.push(19 as u8);
     to_write.extend("BitTorrent protocol".bytes());
@@ -29,14 +31,14 @@ pub fn handshake(
 
     // validate info hash
     if in_info_hash != *info_hash {
-        println!("Invalid info hash");
+        info!("Invalid info hash");
     }
 
     let peer_id_vec: Vec<u8> = my_id.bytes().collect();
     if in_peer_id == peer_id_vec {
         // TODO: do something about it!
-        println!("Invalid peer id");
+        info!("Invalid peer id");
     }
-    println!("Completed handshake!");
+    info!("Completed handshake!");
     return Ok(());
 }
