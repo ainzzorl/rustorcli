@@ -119,7 +119,9 @@ fn handle_incoming_connection(
                     found = true;
                     s.set_nonblocking(true).unwrap();
                     let peer_index = download.register_incoming_peer(s);
+                    thread::sleep(time::Duration::from_secs(1));
                     peer_protocol::send_bitfield(peer_index, download);
+                    thread::sleep(time::Duration::from_secs(1));
                     peer_protocol::send_unchoke(peer_index, download);
                     info!("Done adding the connection to download");
                     break;
