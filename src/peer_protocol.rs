@@ -197,6 +197,51 @@ pub fn send_block(download: &mut Download, request: &IncomingBlockRequest) {
     send_message(s, 7, &payload).unwrap();
 }
 
+pub fn receive_message(
+    stream: &mut TcpStream,
+    download_id: usize,
+    peer_id: usize,
+) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
+    debug!("Getting message size... peer_id={}", peer_id);
+    match io_primitives::read_n(&stream, 4, false) {
+        Ok(sizebytes) => {
+            let message_size = io_primitives::bytes_to_u32(&sizebytes);
+            debug!("Message size: {}", message_size);
+            if message_size == 0 {
+                debug!("Looks like keepalive");
+                return Ok(None);
+            }
+            debug!("Reading message payload...");
+            match io_primitives::read_n(&stream, message_size, true) {
+                Ok(message) => Ok(Some(message)),
+                Err(e) => {
+                    warn!(
+                        "Error reading message, download_id={} peer_id={}: {:?}, resetting connection",
+                        download_id, peer_id, e);
+                    Err(std::boxed::Box::new(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "Read reading message after getting size",
+                    )))
+                }
+            }
+        }
+        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+            debug!(
+                "Would-block error from peer_id={} - returning empty",
+                peer_id
+            );
+            Ok(None)
+        }
+        Err(e) => {
+            warn!(
+                "Unexpected error, dowload_id={}, peer_id={}: {:?}",
+                download_id, peer_id, e
+            );
+            Err(std::boxed::Box::new(e))
+        }
+    }
+}
+
 fn to_incoming_block_request(peer_id: usize, message: Vec<u8>) -> IncomingBlockRequest {
     let pieceindex = io_primitives::bytes_to_u32(&message[1..=4]);
     let begin = io_primitives::bytes_to_u32(&message[5..=8]) as usize;

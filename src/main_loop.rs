@@ -10,7 +10,6 @@ use serde_bytes::ByteBuf;
 use std::{thread, time};
 
 use serde_bencode::de;
-use std::io;
 use std::io::Write;
 
 use percent_encoding::percent_encode_byte;
@@ -31,7 +30,6 @@ use log::*;
 use crate::announcement::PeerInfo;
 use crate::decider::*;
 use crate::download::Download;
-use crate::io_primitives;
 use crate::io_primitives::read_n;
 use crate::outgoing_connections::*;
 use crate::peer_protocol;
@@ -344,67 +342,41 @@ fn execute_incoming_block_requests(downloads: &mut HashMap<u32, Download>) {
 
 fn receive_messages(downloads: &mut HashMap<u32, Download>) {
     info!("Receiving messages connections");
-    for download in downloads.values_mut() {
-        let mut peer_id: usize = 0;
-
+    for (download_id, download) in downloads {
         struct Msg {
             message: Vec<u8>,
             peer_id: usize,
         }
         let mut to_process = Vec::new();
-        let mut connections_to_reset: Vec<usize> = Vec::new();
-        for peer in download.peers_mut() {
-            match &peer.stream {
-                Some(stream) => loop {
-                    info!("Getting message size... peer_id={}", peer_id);
-                    match read_n(&stream, 4, false) {
-                        Ok(sizebytes) => {
-                            let message_size = io_primitives::bytes_to_u32(&sizebytes);
-                            info!("Message size: {}", message_size);
-                            if message_size == 0 {
-                                info!("Looks like keepalive");
-                            } else {
-                                info!("Reading message payload...");
-                                match read_n(&stream, message_size, true) {
-                                    Ok(message) => {
-                                        to_process.push(Msg {
-                                            message: message,
-                                            peer_id: peer_id,
-                                        });
-                                        break;
-                                    }
-                                    Err(e) => {
-                                        info!(
-                                            "Error reading message from peer_id={}: {:?}, resetting connection",
-                                            peer_id, e);
-                                        connections_to_reset.push(peer_id);
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                            info!("Would-block error from peer_id={}: {:?}", peer_id, e);
-                            break;
-                        }
-                        Err(e) => {
-                            info!("Unexpected error from peer_id={}: {:?}", peer_id, e);
-                            break;
-                        }
-                    }
-                },
-                None => {
-                    // Connection is not open
+        let mut peers_to_reset: Vec<usize> = Vec::new();
+        let peers = download.peers_mut();
+        for (peer_id, peer) in peers.into_iter().enumerate() {
+            if peer.stream.is_none() {
+                continue;
+            }
+            let stream: &mut TcpStream = peer.stream.as_mut().unwrap();
+            // TODO: loop!
+            match peer_protocol::receive_message(stream, *download_id as usize, peer_id) {
+                Ok(Some(message)) => {
+                    to_process.push(Msg {
+                        message: message,
+                        peer_id: peer_id,
+                    });
+                }
+                Ok(None) => {
+                    // Do nothing
+                }
+                Err(_) => {
+                    peers_to_reset.push(peer_id);
                 }
             }
-            peer_id += 1;
         }
 
         for msg in to_process {
             peer_protocol::process_message(msg.message, download, msg.peer_id);
         }
-        for p in connections_to_reset {
-            download.peers_mut()[p].stream = None;
+        for p in peers_to_reset {
+            download.on_broken_connection(p);
         }
     }
 }

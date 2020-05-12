@@ -52,7 +52,7 @@ fn read_n_to_buf(
             Ok(0) => return Err(std::io::Error::new(io::ErrorKind::Other, "Read 0 bytes!")),
             Ok(n) if n == bytes_to_read as usize => Ok(()),
             Ok(n) => read_n_to_buf(stream, buf, bytes_to_read - n as u32, blocking),
-            Err(e) => return Err(std::io::Error::new(io::ErrorKind::Other, e)),
+            Err(e) => Err(e),
         }
     } else {
         stream.set_nonblocking(true).unwrap();
@@ -61,7 +61,7 @@ fn read_n_to_buf(
             Ok(0) => return Err(std::io::Error::new(io::ErrorKind::Other, "Read 0 bytes!")),
             Ok(n) if n == bytes_to_read as usize => Ok(()),
             Ok(n) => read_n_to_buf(stream, buf, bytes_to_read - n as u32, blocking),
-            Err(e) => return Err(std::io::Error::new(io::ErrorKind::WouldBlock, e)),
+            Err(e) => Err(e),
         }
     }
 }

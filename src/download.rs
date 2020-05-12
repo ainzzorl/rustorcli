@@ -351,6 +351,14 @@ impl Download {
         }
     }
 
+    pub fn on_broken_connection(&mut self, peer_id: usize) {
+        warn!(
+            "Resetting connection, download_id={}, peer_id={}",
+            self.id, peer_id
+        );
+        self.peers[peer_id].stream = None;
+    }
+
     fn check_if_done(&self) {
         if self.is_done() {
             self.on_done();
