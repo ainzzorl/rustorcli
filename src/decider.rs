@@ -6,6 +6,9 @@ static REQUEST_EXPIRATION: Duration = Duration::from_secs(30);
 static MAX_OUTSTANDING_REQUESTS_PER_PEER: i32 = 10;
 static MAX_REQUESTS_PER_TICK: usize = 10;
 
+static MAX_RECONNECT_ATTEMPTS: u32 = 32;
+static MIN_RECONNECT_INTERVAL: Duration = Duration::from_secs(5);
+
 pub struct BlockRequest {
     pub download_id: u32,
     pub peer_id: usize,
@@ -72,6 +75,41 @@ pub fn decide_incoming_block_requests(download: &mut Download) -> Vec<IncomingBl
         result.push(download.pending_block_requests.pop_front().unwrap());
     }
 
+    result
+}
+
+pub fn decide_peers_to_reconnect(download: &Download) -> Vec<usize> {
+    let mut result = Vec::new();
+    if download.is_downloaded() {
+        return result;
+    }
+    for (peer_id, peer) in download.peers().iter().enumerate() {
+        if peer.stream.is_some() {
+            continue;
+        }
+        match &peer.peer_info {
+            Some(peer_info) => {
+                if peer_info.port == 6881 {
+                    // Don't connect to self.
+                    // TODO: use id instead.
+                    continue;
+                }
+            }
+            None => {
+                continue;
+            }
+        };
+        if peer.being_connected {
+            continue;
+        }
+        if peer.reconnect_attempts >= MAX_RECONNECT_ATTEMPTS {
+            continue;
+        }
+        if std::time::SystemTime::now().elapsed().unwrap() < MIN_RECONNECT_INTERVAL {
+            continue;
+        }
+        result.push(peer_id);
+    }
     result
 }
 

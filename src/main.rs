@@ -4,8 +4,6 @@ extern crate serde_derive;
 extern crate daemonize;
 extern crate sysinfo;
 
-//#[macro_use] extern crate log;
-
 pub mod announcement;
 pub mod decider;
 pub mod download;

@@ -119,6 +119,10 @@ pub struct Peer {
     pub outstanding_block_requests: i32,
 
     pub has_piece: Vec<bool>,
+
+    pub last_reconnect_attempt: std::time::SystemTime,
+    pub reconnect_attempts: u32,
+    pub being_connected: bool,
 }
 
 impl Peer {
@@ -130,6 +134,9 @@ impl Peer {
             we_choked: true,
             outstanding_block_requests: 0,
             has_piece: vec![false; num_pieces],
+            last_reconnect_attempt: std::time::SystemTime::UNIX_EPOCH,
+            reconnect_attempts: 0,
+            being_connected: false,
         }
     }
 }

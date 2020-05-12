@@ -136,14 +136,14 @@ fn handle_incoming_connection(
     }
 }
 
-fn request_connections(
+fn request_new_connections(
     downloads: &mut HashMap<u32, Download>,
     my_id: &String,
-    outx: Sender<OpenConnectionRequest>,
+    outx: &mut Sender<OpenConnectionRequest>,
 ) {
     for (download_id, download) in downloads {
         let info_hash = download.info_hash.clone();
-        for (peer_id, peer) in download.peers_mut().iter().enumerate() {
+        for (peer_id, peer) in download.peers_mut().into_iter().enumerate() {
             if !peer.stream.is_none() {
                 continue;
             }
@@ -162,6 +162,37 @@ fn request_connections(
             info!(
                 "Requesting connection through the channel. peer_id={}, download_id={}",
                 peer_id, download_id
+            );
+            peer.being_connected = true;
+            outx.send(OpenConnectionRequest {
+                ip: peer_info.ip.clone(),
+                port: peer_info.port.clone(),
+                my_id: my_id.clone(),
+                peer_id: peer_id,
+                download_id: *download_id as usize,
+                info_hash: info_hash.clone(),
+            })
+            .expect("Expected send to succeed");
+        }
+    }
+}
+
+fn request_resetting_broken_connections(
+    downloads: &mut HashMap<u32, Download>,
+    my_id: &String,
+    outx: &mut Sender<OpenConnectionRequest>,
+) {
+    for (download_id, download) in downloads {
+        let info_hash = download.info_hash.clone();
+        for peer_id in decide_peers_to_reconnect(download) {
+            let peer = download.peer_mut(peer_id);
+            peer.reconnect_attempts += 1;
+            peer.last_reconnect_attempt = std::time::SystemTime::now();
+            peer.being_connected = true;
+            let peer_info = peer.peer_info.as_ref().unwrap();
+            info!(
+                "Requesting reconnection through the channel. peer_id={}, download_id={}, attempt={}",
+                peer_id, download_id, peer.reconnect_attempts
             );
             outx.send(OpenConnectionRequest {
                 ip: peer_info.ip.clone(),
@@ -185,38 +216,38 @@ fn process_new_connections(
 
     loop {
         match inx.try_recv() {
-            Ok(response_res) => {
-                match response_res {
-                    Ok(response) => {
-                        info!(
-                            "Received established connection. download_id={}, peer_id={}",
-                            response.download_id, response.peer_id
-                        );
-                        let stream = response.stream;
-                        stream.set_nonblocking(true).unwrap();
-                        let download = downloads
-                            .get_mut(&(response.download_id as u32))
-                            .expect("Download must exist");
-                        download.peers_mut()[response.peer_id].stream = Some(stream);
-                        peer_protocol::send_bitfield(response.peer_id, download);
-                        peer_protocol::send_unchoke(response.peer_id, download);
-                        if peer_protocol::send_interested(
-                            &mut download.peers_mut()[response.peer_id]
-                                .stream
-                                .as_mut()
-                                .unwrap(),
-                        )
-                        .is_ok()
-                        {
-                            download.peer_mut(response.peer_id).we_interested = true;
-                        };
-                    }
-                    Err(e) => {
-                        // TODO: message should include details!
-                        info!("Failed to establish connection, {:?}", e);
-                    }
+            Ok(response_res) => match response_res {
+                Ok(response) => {
+                    info!(
+                        "Received established connection. download_id={}, peer_id={}",
+                        response.download_id, response.peer_id
+                    );
+                    let stream = response.stream;
+                    stream.set_nonblocking(true).unwrap();
+                    let download = downloads
+                        .get_mut(&(response.download_id as u32))
+                        .expect("Download must exist");
+                    download.peers_mut()[response.peer_id].stream = Some(stream);
+                    download.peers_mut()[response.peer_id].being_connected = false;
+                    peer_protocol::send_bitfield(response.peer_id, download);
+                    peer_protocol::send_unchoke(response.peer_id, download);
+                    if peer_protocol::send_interested(
+                        &mut download.peers_mut()[response.peer_id]
+                            .stream
+                            .as_mut()
+                            .unwrap(),
+                    )
+                    .is_ok()
+                    {
+                        download.peer_mut(response.peer_id).we_interested = true;
+                    };
                 }
-            }
+                Err(e) => {
+                    warn!("Failed to establish connection, {:?}", e);
+                    let download = downloads.get_mut(&e.download_id()).unwrap();
+                    download.peer_mut(e.peer_id()).being_connected = false;
+                }
+            },
             Err(_) => {
                 break;
             }
@@ -231,7 +262,7 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: b
 
     let mut iteration = 0;
 
-    let (open_connections_request_sender, open_connections_request_receiver): (
+    let (mut open_connections_request_sender, open_connections_request_receiver): (
         Sender<OpenConnectionRequest>,
         Receiver<OpenConnectionRequest>,
     ) = mpsc::channel();
@@ -247,7 +278,7 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: b
             open_connections_response_sender,
         );
     });
-    request_connections(downloads, &my_id, open_connections_request_sender);
+    request_new_connections(downloads, &my_id, &mut open_connections_request_sender);
 
     loop {
         info!("Main loop iteration #{}", iteration);
@@ -263,6 +294,12 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: b
 
         execute_outgoing_block_requests(downloads);
         execute_incoming_block_requests(downloads);
+
+        request_resetting_broken_connections(
+            downloads,
+            &my_id,
+            &mut open_connections_request_sender,
+        );
 
         thread::sleep(time::Duration::from_millis(100));
         iteration += 1;

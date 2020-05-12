@@ -1,5 +1,5 @@
-use failure::Error;
 use log::*;
+use std::fmt;
 use std::net::SocketAddr;
 use std::net::TcpStream;
 use std::sync::mpsc::{Receiver, Sender};
@@ -23,7 +23,41 @@ pub struct OpenConnectionResponseBody {
     pub peer_id: usize,
 }
 
-pub type OpenConnectionResponse = Result<OpenConnectionResponseBody, Error>;
+#[derive(Clone, Debug)]
+pub struct ConnectionError {
+    peer_id: usize,
+    download_id: u32,
+}
+
+impl ConnectionError {
+    pub fn peer_id(&self) -> usize {
+        self.peer_id
+    }
+
+    pub fn download_id(&self) -> u32 {
+        self.download_id
+    }
+}
+
+impl fmt::Display for ConnectionError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "ConnectionError(peer_id={}, download_id={})",
+            self.peer_id,
+            self.download_id()
+        )
+    }
+}
+
+impl std::error::Error for ConnectionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        // Generic error, underlying cause isn't tracked.
+        None
+    }
+}
+
+pub type OpenConnectionResponse = Result<OpenConnectionResponseBody, ConnectionError>;
 
 pub fn open_missing_connections(
     inx: Receiver<OpenConnectionRequest>,
@@ -65,13 +99,21 @@ pub fn open_missing_connections(
                     }
                     Err(e) => {
                         info!("Handshake failure: {:?}", e);
-                        outx.send(Err(Error::from(e))).unwrap();
+                        outx.send(Err(ConnectionError {
+                            peer_id: request.peer_id,
+                            download_id: request.download_id as u32,
+                        }))
+                        .unwrap();
                     }
                 }
             }
             Err(e) => {
                 info!("Could not connect to peer: {:?}", e);
-                outx.send(Err(Error::from(e))).unwrap();
+                outx.send(Err(ConnectionError {
+                    peer_id: request.peer_id,
+                    download_id: request.download_id as u32,
+                }))
+                .unwrap();
             }
         }
     }
