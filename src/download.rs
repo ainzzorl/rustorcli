@@ -53,6 +53,8 @@ pub struct Download {
     pub info_hash: Vec<u8>,
 
     pub pending_block_requests: VecDeque<IncomingBlockRequest>,
+
+    downloaded: bool,
 }
 
 pub struct Piece {
@@ -175,7 +177,8 @@ impl Download {
         }
 
         let pieces = Download::init_pieces(&torrent_serializable, &mut file);
-        Download {
+
+        let mut download = Download {
             id: entry.id,
             download_path: entry.download_path.clone(),
             announcement_url: torrent_serializable.announce,
@@ -188,7 +191,10 @@ impl Download {
             pieces: pieces,
             info_hash: torrent_serializable.info_hash,
             pending_block_requests: VecDeque::new(),
-        }
+            downloaded: false,
+        };
+        download.downloaded = download.get_is_downloaded();
+        download
     }
 
     pub fn register_outgoing_peer(&mut self, peer_info: PeerInfo) -> usize {
@@ -234,7 +240,14 @@ impl Download {
     pub fn set_block_downloaded(&mut self, piece_id: usize, block_id: usize) {
         self.pieces[piece_id].set_block_downloaded(block_id);
         self.check_if_piece_done(piece_id);
-        self.check_if_done();
+        if self.get_is_downloaded() {
+            self.downloaded = true;
+            self.on_done();
+        }
+    }
+
+    pub fn is_downloaded(&self) -> bool {
+        self.downloaded
     }
 
     fn init_pieces(torrent_serializable: &TorrentSerializable, file: &mut File) -> Vec<Piece> {
@@ -359,12 +372,6 @@ impl Download {
         self.peers[peer_id].stream = None;
     }
 
-    fn check_if_done(&self) {
-        if self.is_done() {
-            self.on_done();
-        }
-    }
-
     fn on_done(&self) {
         info!("Download is done!");
         let dest = format!("{}/{}", self.download_path, self.name);
@@ -372,7 +379,7 @@ impl Download {
         fs::rename(&self.temp_location, dest).unwrap();
     }
 
-    fn is_done(&self) -> bool {
+    fn get_is_downloaded(&self) -> bool {
         info!("Checking if the download is done...");
         let mut num_blocks = 0;
         let mut downloaded_blocks = 0;
@@ -380,6 +387,11 @@ impl Download {
 
         for p_id in 0..self.pieces().len() {
             let p = &self.pieces()[p_id];
+            if p.downloaded {
+                num_blocks += p.blocks.len();
+                downloaded_blocks += p.blocks.len();
+                continue;
+            }
             for b_id in 0..p.blocks().len() {
                 let b = p.blocks()[b_id].downloaded();
                 num_blocks += 1;
