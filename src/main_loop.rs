@@ -392,19 +392,21 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
                 continue;
             }
             let stream: &mut TcpStream = peer.stream.as_mut().unwrap();
-            // TODO: loop!
-            match peer_protocol::receive_message(stream, *download_id as usize, peer_id) {
-                Ok(Some(message)) => {
-                    to_process.push(Msg {
-                        message: message,
-                        peer_id: peer_id,
-                    });
-                }
-                Ok(None) => {
-                    // Do nothing
-                }
-                Err(_) => {
-                    peers_to_reset.push(peer_id);
+            for _ in 0..100 { // Guard against too many incoming messages
+                match peer_protocol::receive_message(stream, *download_id as usize, peer_id) {
+                    Ok(Some(message)) => {
+                        to_process.push(Msg {
+                            message: message,
+                            peer_id: peer_id,
+                        });
+                    }
+                    Ok(None) => {
+                        break;
+                    }
+                    Err(_) => {
+                        peers_to_reset.push(peer_id);
+                        break;
+                    }
                 }
             }
         }
