@@ -21,6 +21,7 @@ cleanup:
 			 killall transmission-daemon || true
 			 killall WebTorrent || true
 			 killall rustorcli || true
+			 lsof -i:8000 | awk 'NR!=1 {print $$2}' | xargs kill -9
 			 rm -rf target/tmp/
 			 # TODO: other OS
 			 rm -rf "$$HOME/Library/Application Support/rustorcli/"
