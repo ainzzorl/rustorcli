@@ -1,5 +1,7 @@
 use std::time::{Duration, SystemTime};
 
+use log::*;
+
 use crate::download::{BlockRequestRecord, Download, IncomingBlockRequest};
 
 static REQUEST_EXPIRATION: Duration = Duration::from_secs(30);
@@ -100,14 +102,18 @@ pub fn decide_peers_to_reconnect(download: &Download) -> Vec<usize> {
             }
         };
         if peer.being_connected {
+            trace!("Not requesting reconnection - being connected. download_id={}, peer_id={}", download.id, peer_id);
             continue;
         }
         if peer.reconnect_attempts >= MAX_RECONNECT_ATTEMPTS {
+            trace!("Not requesting reconnection - too many attempts. download_id={}, peer_id={}", download.id, peer_id);
             continue;
         }
-        if std::time::SystemTime::now().elapsed().unwrap() < MIN_RECONNECT_INTERVAL {
+        if peer.last_reconnect_attempt.elapsed().unwrap() < MIN_RECONNECT_INTERVAL {
+            trace!("Not requesting reconnection - too soon. download_id={}, peer_id={}", download.id, peer_id);
             continue;
         }
+        trace!("Going to request reconnection!. download_id={}, peer_id={}", download.id, peer_id);
         result.push(peer_id);
     }
     result
