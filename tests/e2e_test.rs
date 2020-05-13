@@ -117,8 +117,7 @@ mod e2e_tests {
                 starting_files: vec![String::from("torrent_c_data")],
                 expected_files: vec![
                     String::from("torrent_a_data"),
-                    // TODO: why doesn't it work?
-                    //String::from("torrent_b_data"),
+                    String::from("torrent_b_data"),
                     String::from("torrent_c_data"),
                 ],
                 torrents: vec![
@@ -402,22 +401,32 @@ mod e2e_tests {
                             .starting_files
                             .iter()
                             .any(|f| f.clone() + &String::from(".torrent") == *file);
-                        let directory = if has_already {
-                            self.directory()
+
+                        if has_already {
+                            Command::new("webtorrent")
+                                .stdout(Stdio::null())
+                                .stderr(Stdio::null())
+                                .arg("seed")
+                                .arg(format!("./data/{}", file.as_str()))
+                                .arg("-o")
+                                .arg(self.directory())
+                                .arg("--keep-seeding")
+                                .spawn()
+                                .expect("Failed to start webtorrent");
                         } else {
-                            self.temp_directory()
+                            Command::new("webtorrent")
+                                .stdout(Stdio::null())
+                                .stderr(Stdio::null())
+                                .arg("download")
+                                .arg(format!("./data/{}", file.as_str()))
+                                .arg("-o")
+                                .arg(self.temp_directory())
+                                .arg("--on-done")
+                                .arg(format!("tests/on-webtorrent-done-{}.sh", file))
+                                .arg("--keep-seeding")
+                                .spawn()
+                                .expect("Failed to start webtorrent");
                         };
-                        Command::new("webtorrent")
-                            .stdout(Stdio::null())
-                            .stderr(Stdio::null())
-                            .arg("download")
-                            .arg(format!("./data/{}", file.as_str()))
-                            .arg("-o")
-                            .arg(directory)
-                            .arg("--on-done")
-                            .arg(format!("tests/on-webtorrent-done-{}.sh", file))
-                            .spawn()
-                            .expect("Failed to start webtorrent");
                     }
                 }
                 ClientType::TRANSMISSION => {
