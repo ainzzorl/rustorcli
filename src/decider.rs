@@ -18,6 +18,28 @@ pub struct BlockRequest {
     pub block_id: usize,
 }
 
+pub struct HaveBroadcast {
+    peer_id: usize,
+    piece_id: usize,
+}
+
+impl HaveBroadcast {
+    pub fn new(peer_id: usize, piece_id: usize) -> HaveBroadcast {
+        HaveBroadcast {
+            peer_id: peer_id,
+            piece_id: piece_id,
+        }
+    }
+
+    pub fn peer_id(&self) -> usize {
+        self.peer_id
+    }
+
+    pub fn piece_id(&self) -> usize {
+        self.piece_id
+    }
+}
+
 // TODO: should it really update Download here or when executing?
 // TODO: randomize a little
 pub fn decide_block_requests(download: &mut Download) -> Vec<BlockRequest> {
@@ -132,6 +154,24 @@ pub fn decide_peers_to_reconnect(download: &Download) -> Vec<usize> {
         );
         result.push(peer_id);
     }
+    result
+}
+
+pub fn decide_have_broadcasts(download: &mut Download) -> Vec<HaveBroadcast> {
+    let mut result: Vec<HaveBroadcast> = Vec::new();
+    for recent_piece in download.recently_downloaded_pieces.iter() {
+        for (peer_id, peer) in download.peers().iter().enumerate() {
+            if peer.has_piece[*recent_piece] {
+                // Or should we broadcast to them too?
+                continue;
+            }
+            if peer.stream.is_none() {
+                continue;
+            }
+            result.push(HaveBroadcast::new(peer_id, *recent_piece));
+        }
+    }
+    download.recently_downloaded_pieces = Vec::new();
     result
 }
 

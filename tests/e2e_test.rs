@@ -81,16 +81,12 @@ mod e2e_tests {
                 starting_files: vec![String::from("torrent_a_data")],
                 expected_files: vec![
                     String::from("torrent_a_data"),
-                    // TODO: transmissiong should be able to download this one too!
-                    // It won't connect to Webtorrent,
-                    // but once rustorcli learns to announce newly downloaded pieces,
-                    // it should be able to transfer to transmission.
-                    //String::from("torrent_b_data"),
+                    String::from("torrent_b_data"),
                     String::from("torrent_c_data"),
                 ],
                 torrents: vec![
                     String::from("torrent_a_data.torrent"),
-                    //String::from("torrent_b_data.torrent"),
+                    String::from("torrent_b_data.torrent"),
                     String::from("torrent_c_data.torrent"),
                 ],
             },
@@ -98,16 +94,12 @@ mod e2e_tests {
                 client_type: ClientType::WEBTORRENT,
                 starting_files: vec![String::from("torrent_b_data")],
                 expected_files: vec![
-                    // TODO: Webtorrent should be able to download this one too!
-                    // It won't connect to Transmission,
-                    // but once rustorcli learns to announce newly downloaded pieces,
-                    // it should be able to transfer to Webtorrent.
-                    //String::from("torrent_a_data"),
+                    String::from("torrent_a_data"),
                     String::from("torrent_b_data"),
                     String::from("torrent_c_data"),
                 ],
                 torrents: vec![
-                    //String::from("torrent_a_data.torrent"),
+                    String::from("torrent_a_data.torrent"),
                     String::from("torrent_b_data.torrent"),
                     String::from("torrent_c_data.torrent"),
                 ],

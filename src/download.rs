@@ -54,6 +54,8 @@ pub struct Download {
 
     pub pending_block_requests: VecDeque<IncomingBlockRequest>,
 
+    pub recently_downloaded_pieces: Vec<usize>,
+
     downloaded: bool,
 }
 
@@ -199,6 +201,7 @@ impl Download {
             info_hash: torrent_serializable.info_hash,
             pending_block_requests: VecDeque::new(),
             downloaded: false,
+            recently_downloaded_pieces: Vec::new(),
         };
         download.downloaded = download.get_is_downloaded();
         download
@@ -360,6 +363,7 @@ impl Download {
         let is_complete = *expected_hash == actual_hash;
         if is_complete {
             info!("Hashes match for piece {}", piece_id);
+            self.recently_downloaded_pieces.push(piece_id);
         } else {
             panic!(
                 "Hashes don't match for piece {}. Expected: {}, actual: {}",

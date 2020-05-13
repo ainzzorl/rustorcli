@@ -59,6 +59,29 @@ pub fn send_interested(stream: &mut TcpStream) -> Result<(), std::io::Error> {
     return send_message(stream, 2, &Vec::new());
 }
 
+pub fn send_have(
+    download: &mut Download,
+    peer_id: usize,
+    piece_id: usize,
+) -> Result<(), std::io::Error> {
+    info!(
+        "Sending have, download_id={}, peer_id={}, piece_id={}",
+        download.id, peer_id, piece_id
+    );
+
+    let peer = download.peers_mut()[peer_id].stream.as_mut();
+    if peer.is_none() {
+        info!("Stream is already closed");
+        return Ok(());
+    }
+
+    let mut payload: Vec<u8> = Vec::new();
+    payload.extend(io_primitives::u32_to_bytes(piece_id as u32));
+    send_message(peer.unwrap(), 4, &payload)?;
+
+    return Ok(());
+}
+
 pub fn request_block(
     download: &mut Download,
     piece_id: usize,
@@ -283,7 +306,6 @@ fn on_piece(message: Vec<u8>, download: &mut Download, peer_id: usize) {
 
     download.peer_mut(peer_id).outstanding_block_requests -= 1;
     download.set_block_downloaded(pieceindex as usize, block_id);
-    download.check_if_piece_done(pieceindex as usize);
 }
 
 fn send_message(

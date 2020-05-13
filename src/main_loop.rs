@@ -293,6 +293,7 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: b
         process_new_connections(downloads, &open_connections_response_receiver);
         receive_incoming_connections(&mut tcp_listener, my_id, downloads);
         receive_messages(downloads);
+        broadcast_have(downloads);
 
         execute_outgoing_block_requests(downloads);
         execute_incoming_block_requests(downloads);
@@ -305,6 +306,21 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: b
 
         thread::sleep(time::Duration::from_millis(100));
         iteration += 1;
+    }
+}
+
+fn broadcast_have(downloads: &mut HashMap<u32, Download>) {
+    for d in downloads.values_mut() {
+        let mut download: &mut Download = d;
+        for have_broadcast in decide_have_broadcasts(&mut download) {
+            // TODO: do something about failed connections.
+            peer_protocol::send_have(
+                download,
+                have_broadcast.peer_id(),
+                have_broadcast.piece_id(),
+            )
+            .ok();
+        }
     }
 }
 
