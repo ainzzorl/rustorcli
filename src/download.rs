@@ -57,6 +57,8 @@ pub struct Download {
     pub recently_downloaded_pieces: Vec<usize>,
 
     downloaded: bool,
+
+    stats: Stats,
 }
 
 pub struct Piece {
@@ -143,6 +145,38 @@ impl Peer {
     }
 }
 
+pub struct Stats {
+    downloaded: u32,
+    uploaded: u32,
+}
+
+impl Stats {
+    pub fn new() -> Stats {
+        Stats {
+            downloaded: 0,
+            uploaded: 0
+        }
+    }
+
+    pub fn downloaded(&self) -> u32 {
+        self.downloaded
+    }
+
+    pub fn uploaded(&self) -> u32 {
+        self.uploaded
+    }
+
+    pub fn add_downloaded(&mut self, delta: u32) {
+        self.downloaded += delta;
+        debug!("Total downloaded: {}", self.downloaded);
+    }
+
+    pub fn add_uploaded(&mut self, delta: u32) {
+        self.uploaded += delta;
+        debug!("Total uploaded: {}", self.uploaded);
+    }
+}
+
 impl Download {
     pub fn new(entry: &torrent_entries::TorrentEntry) -> Download {
         let torrent_serializable = read_torrent(&entry.torrent_path);
@@ -202,6 +236,7 @@ impl Download {
             pending_block_requests: VecDeque::new(),
             downloaded: false,
             recently_downloaded_pieces: Vec::new(),
+            stats: Stats::new(),
         };
         download.downloaded = download.get_is_downloaded();
         download
@@ -241,6 +276,14 @@ impl Download {
 
     pub fn pieces_mut(&mut self) -> &mut Vec<Piece> {
         &mut self.pieces
+    }
+
+    pub fn stats(&self) -> &Stats {
+        &self.stats
+    }
+
+    pub fn stats_mut(&mut self) -> &mut Stats {
+        &mut self.stats
     }
 
     pub fn add_incoming_block_request(&mut self, request: IncomingBlockRequest) {

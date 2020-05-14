@@ -205,6 +205,7 @@ pub fn send_block(download: &mut Download, request: &IncomingBlockRequest) {
     file.take(request.length as u64)
         .read_to_end(&mut data)
         .unwrap();
+    let blocklen = data.len();
 
     let peer: &mut Peer = download.peer_mut(request.peer_id);
     let s: &mut TcpStream = peer
@@ -218,6 +219,7 @@ pub fn send_block(download: &mut Download, request: &IncomingBlockRequest) {
     payload.extend(data);
 
     send_message(s, 7, &payload).unwrap();
+    download.stats_mut().add_uploaded(blocklen as u32);
 }
 
 pub fn receive_message(
@@ -306,6 +308,7 @@ fn on_piece(message: Vec<u8>, download: &mut Download, peer_id: usize) {
 
     download.peer_mut(peer_id).outstanding_block_requests -= 1;
     download.set_block_downloaded(pieceindex as usize, block_id);
+    download.stats_mut().add_downloaded(blocklen as u32);
 }
 
 fn send_message(
