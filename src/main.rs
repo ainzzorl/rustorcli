@@ -195,10 +195,20 @@ fn remove(id: &str) {
 
 fn list() {
     let entries = torrent_entries::list_torrents();
+    let states = state_persistence::load(&format!("{}/{}", util::config_directory(), "state.json"));
     for entry in entries {
+        let mut downloaded = String::from("?");
+        let mut uploaded = String::from("?");
+        match states.get(&entry.id) {
+            Some(state) => {
+                downloaded = state.downloaded.to_string();
+                uploaded = state.uploaded.to_string();
+            }
+            None => {}
+        }
         println!(
-            "{} - {} - {}",
-            entry.id, entry.torrent_path, entry.download_path
+            "{} - {} - {}. Downloaded: {}. Uploaded: {}.",
+            entry.id, entry.torrent_path, entry.download_path, downloaded, uploaded
         );
     }
 }
