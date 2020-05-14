@@ -30,6 +30,7 @@ use log::*;
 use crate::announcement::PeerInfo;
 use crate::decider::*;
 use crate::download::Download;
+use crate::download::Stats;
 use crate::io_primitives::read_n;
 use crate::outgoing_connections::*;
 use crate::peer_protocol;
@@ -49,14 +50,30 @@ struct AnnouncementAltPeers {
     peers: ByteBuf,
 }
 
-fn reload_config(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: bool) {
+fn reload_config(
+    downloads: &mut HashMap<u32, Download>,
+    my_id: &String,
+    is_local: bool,
+    persistent_states: &HashMap<u32, state_persistence::PersistentDownloadState>,
+) {
     let entries = torrent_entries::list_torrents();
     info!("Reloading config. Entries: {}", entries.len());
     for entry in entries {
         if !downloads.contains_key(&entry.id) {
             info!("Adding entry, id={}", entry.id);
 
-            let download = to_download(&entry, my_id, is_local);
+            let mut download = to_download(&entry, my_id, is_local);
+
+            match persistent_states.get(&download.id) {
+                Some(state) => {
+                    // TODO: check info hash
+                    download.set_stats(Stats {
+                        downloaded: state.downloaded,
+                        uploaded: state.uploaded,
+                    });
+                }
+                None => {}
+            }
 
             downloads.insert(entry.id, download);
         }
@@ -260,13 +277,16 @@ fn process_new_connections(
 }
 
 fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: bool) {
-    reload_config(downloads, &my_id, is_local);
+    let persistent_state_location = format!("{}/{}", util::config_directory(), "state.json");
+    let initial_persistent_state = state_persistence::load(&persistent_state_location);
 
     let mut tcp_listener = start_listeners(6881);
 
     let mut iteration = 0;
 
     let mut last_state_persistence = std::time::SystemTime::now();
+
+    reload_config(downloads, &my_id, is_local, &initial_persistent_state);
 
     let (mut open_connections_request_sender, open_connections_request_receiver): (
         Sender<OpenConnectionRequest>,
@@ -291,12 +311,11 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: b
 
         if iteration % 100 == 0 {
             info!("Reloading config on iteration {}", iteration);
-            reload_config(downloads, &my_id, is_local);
+            reload_config(downloads, &my_id, is_local, &initial_persistent_state);
         }
 
         if last_state_persistence.elapsed().unwrap() > std::time::Duration::from_secs(3) {
-            let location = format!("{}/{}", util::config_directory(), "state.json");
-            state_persistence::persist(downloads, &location);
+            state_persistence::persist(downloads, &persistent_state_location);
             last_state_persistence = std::time::SystemTime::now();
         }
 

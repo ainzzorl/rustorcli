@@ -146,8 +146,8 @@ impl Peer {
 }
 
 pub struct Stats {
-    downloaded: u32,
-    uploaded: u32,
+    pub downloaded: u32,
+    pub uploaded: u32,
 }
 
 impl Stats {
@@ -280,6 +280,10 @@ impl Download {
 
     pub fn stats(&self) -> &Stats {
         &self.stats
+    }
+
+    pub fn set_stats(&mut self, stats: Stats) {
+        self.stats = stats;
     }
 
     pub fn stats_mut(&mut self) -> &mut Stats {
