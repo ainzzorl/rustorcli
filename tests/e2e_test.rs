@@ -9,7 +9,7 @@ mod e2e_tests {
 
     extern crate rustorcli;
 
-    use rustorcli::torrent_entries;
+    use rustorcli::util;
 
     use std::fs;
 
@@ -301,7 +301,7 @@ mod e2e_tests {
             .success();
 
         println!("Cleaning up rustorcli");
-        let config_directory = torrent_entries::config_directory();
+        let config_directory = util::config_directory();
         std::fs::remove_dir_all(config_directory).ok();
 
         return Ok(());

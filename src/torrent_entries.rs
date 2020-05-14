@@ -5,11 +5,9 @@ use std::io::Read;
 use std::path::Path;
 use std::process;
 
-use dirs;
+use crate::util;
 
 static TORRENT_ENTRIES_FILE: &str = "torrent-entries.json";
-// TODO: what if not on mac?
-static TORRENT_ENTRIES_DIR: &str = "Library/Application Support/rustorcli";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TorrentEntry {
@@ -33,14 +31,8 @@ pub fn init_entries() {
     if Path::new(&entries_file_path).exists() {
         return;
     }
-    fs::create_dir_all(config_directory()).unwrap();
+    fs::create_dir_all(util::config_directory()).unwrap();
     fs::write(&entries_file_path, "[]").expect("Unable to write entries file");
-}
-
-pub fn config_directory() -> String {
-    let home = dirs::home_dir().unwrap();
-    let home_str = home.to_str().unwrap();
-    return format!("{}/{}", home_str, TORRENT_ENTRIES_DIR);
 }
 
 pub fn list_torrents() -> Vec<TorrentEntry> {
@@ -87,7 +79,7 @@ pub fn remove_torrent(id: &str) {
 }
 
 fn get_entries_file_path() -> String {
-    return format!("{}/{}", config_directory(), TORRENT_ENTRIES_FILE);
+    return format!("{}/{}", util::config_directory(), TORRENT_ENTRIES_FILE);
 }
 
 fn get_new_id(entries: &Vec<TorrentEntry>) -> u32 {

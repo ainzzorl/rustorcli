@@ -12,7 +12,9 @@ pub mod io_primitives;
 pub mod main_loop;
 pub mod outgoing_connections;
 pub mod peer_protocol;
+pub mod state_persistence;
 pub mod torrent_entries;
+pub mod util;
 
 use clap::{App, Arg, SubCommand};
 use nix::sys::signal::Signal;

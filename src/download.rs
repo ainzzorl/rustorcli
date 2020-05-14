@@ -154,7 +154,7 @@ impl Stats {
     pub fn new() -> Stats {
         Stats {
             downloaded: 0,
-            uploaded: 0
+            uploaded: 0,
         }
     }
 

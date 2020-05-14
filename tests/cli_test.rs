@@ -6,7 +6,7 @@ extern crate rustorcli;
 
 // use rustorcli;
 
-use rustorcli::torrent_entries;
+use rustorcli::util;
 
 // TODO: should tests write configs to some other dirs somehow? Then we'd be able to run them in parallel.
 
@@ -160,6 +160,6 @@ fn add_extra_args() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn pre_test() {
-    let config_directory = torrent_entries::config_directory();
+    let config_directory = util::config_directory();
     std::fs::remove_dir_all(config_directory).unwrap();
 }

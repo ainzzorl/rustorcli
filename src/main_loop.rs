@@ -33,7 +33,9 @@ use crate::download::Download;
 use crate::io_primitives::read_n;
 use crate::outgoing_connections::*;
 use crate::peer_protocol;
+use crate::state_persistence;
 use crate::torrent_entries;
+use crate::util;
 
 #[derive(Debug, Deserialize, Serialize)]
 struct Announcement {
@@ -264,6 +266,8 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: b
 
     let mut iteration = 0;
 
+    let mut last_state_persistence = std::time::SystemTime::now();
+
     let (mut open_connections_request_sender, open_connections_request_receiver): (
         Sender<OpenConnectionRequest>,
         Receiver<OpenConnectionRequest>,
@@ -288,6 +292,12 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: b
         if iteration % 100 == 0 {
             info!("Reloading config on iteration {}", iteration);
             reload_config(downloads, &my_id, is_local);
+        }
+
+        if last_state_persistence.elapsed().unwrap() > std::time::Duration::from_secs(3) {
+            let location = format!("{}/{}", util::config_directory(), "state.json");
+            state_persistence::persist(downloads, &location);
+            last_state_persistence = std::time::SystemTime::now();
         }
 
         process_new_connections(downloads, &open_connections_response_receiver);
