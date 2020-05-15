@@ -5,16 +5,9 @@ extern crate serde_bencode;
 extern crate serde_bytes;
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
-use serde_bytes::ByteBuf;
-
 use std::{thread, time};
 
-use serde_bencode::de;
 use std::io::Write;
-
-use percent_encoding::percent_encode_byte;
-
-use failure::Error;
 
 use std::net::{TcpListener, TcpStream};
 
@@ -27,7 +20,7 @@ use std::sync::mpsc::{Receiver, Sender};
 
 use log::*;
 
-use crate::announcement::PeerInfo;
+use crate::announcement;
 use crate::decider::*;
 use crate::download::Download;
 use crate::download::Stats;
@@ -37,18 +30,6 @@ use crate::peer_protocol;
 use crate::state_persistence;
 use crate::torrent_entries;
 use crate::util;
-
-#[derive(Debug, Deserialize, Serialize)]
-struct Announcement {
-    interval: i64,
-    peers: Vec<PeerInfo>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct AnnouncementAltPeers {
-    interval: i64,
-    peers: ByteBuf,
-}
 
 fn reload_config(
     downloads: &mut HashMap<u32, Download>,
@@ -84,7 +65,7 @@ fn reload_config(
 
 fn to_download(entry: &torrent_entries::TorrentEntry, my_id: &String, is_local: bool) -> Download {
     let mut download = Download::new(entry);
-    let announcement = get_announcement(&download, &my_id, is_local).unwrap();
+    let announcement = announcement::get_announcement(&download, &my_id, is_local).unwrap();
 
     for peer in announcement.peers {
         download.register_outgoing_peer(peer);
@@ -475,116 +456,6 @@ pub fn start_listeners(port: u16) -> TcpListener {
     let listen_addr = tcp_listener.local_addr().unwrap();
     info!("Listener started on {}", listen_addr);
     return tcp_listener;
-}
-
-fn get_announcement(
-    download: &Download,
-    peer_id: &String,
-    is_local: bool,
-) -> Result<Announcement, Error> {
-    let client = reqwest::Client::new();
-    let info_hash = &download.info_hash;
-    let urlencodedih: String = info_hash
-        .iter()
-        .map(|byte| percent_encode_byte(*byte))
-        .collect();
-
-    let query = [
-        ("peer_id", peer_id.clone()),
-        ("uploaded", "0".to_string()),
-        ("downloaded", "0".to_string()),
-        ("port", "6881".to_string()),
-        ("left", "0".to_string()),
-    ];
-    let request = client
-        .get(&download.announcement_url)
-        .query(&query)
-        .build()
-        .unwrap();
-
-    let url = request.url();
-    let url = format!("{}&info_hash={}", url, urlencodedih);
-    info!("Announcement URL: {}", url);
-
-    let mut req_builder = client.get(&url);
-    if is_local {
-        req_builder = req_builder.header("x-forwarded-for", "127.0.0.1");
-    }
-    let mut response = req_builder.send()?;
-    let mut buffer: Vec<u8> = vec![];
-    response.copy_to(&mut buffer)?;
-
-    info!("Tracker response: {}", show(&buffer));
-
-    let announcement: Announcement;
-
-    match de::from_bytes::<Announcement>(&buffer) {
-        Ok(t) => announcement = t,
-        Err(e) => {
-            info!(
-                "Could not parse tracker response: {:?}. Tring alternative structure...",
-                e
-            );
-            match de::from_bytes::<AnnouncementAltPeers>(&buffer) {
-                Ok(announcement_alt) => {
-                    info!("Managed to parse alternative announcement!");
-                    let peers = announcement_alt.peers;
-                    let num_peers = peers.len() / 6;
-                    let mut peers_parsed: Vec<PeerInfo> = vec![];
-                    for i in 0..num_peers {
-                        info!("peer_id=#{}", i);
-                        info!(
-                            "{}.{}.{}.{}:{}",
-                            peers[i * 6],
-                            peers[i * 6 + 1],
-                            peers[i * 6 + 2],
-                            peers[i * 6 + 3],
-                            (peers[i * 6 + 4] as u32) * 256 + (peers[i * 6 + 5] as u32)
-                        );
-                        let peer_info = PeerInfo {
-                            port: (peers[i * 6 + 4] as u64) * 256 + (peers[i * 6 + 5] as u64),
-                            ip: format!(
-                                "{}.{}.{}.{}",
-                                peers[i * 6],
-                                peers[i * 6 + 1],
-                                peers[i * 6 + 2],
-                                peers[i * 6 + 3]
-                            ),
-                        };
-                        peers_parsed.push(peer_info);
-                    }
-
-                    announcement = Announcement {
-                        interval: announcement_alt.interval,
-                        peers: peers_parsed,
-                    };
-                }
-                Err(e) => {
-                    panic!(
-                        "Could not parse tracker response with alternative structure either: {:?}",
-                        e
-                    );
-                }
-            }
-        }
-    }
-
-    info!("Num peers: {}", announcement.peers.len());
-
-    for peer in &announcement.peers {
-        info!("Peer - {}:{}", peer.ip, peer.port);
-    }
-
-    return Ok(announcement);
-}
-
-fn show(bs: &Vec<u8>) -> String {
-    let mut visible = String::new();
-    for &b in bs {
-        let part: Vec<u8> = std::ascii::escape_default(b).collect();
-        visible.push_str(std::str::from_utf8(&part).unwrap());
-    }
-    visible
 }
 
 fn handshake_incoming(stream: &mut TcpStream, my_id: &String) -> Result<Vec<u8>, std::io::Error> {
