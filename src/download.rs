@@ -59,6 +59,9 @@ pub struct Download {
     downloaded: bool,
 
     stats: Stats,
+
+    pub last_check_with_tracker: std::time::SystemTime,
+    pub tracker_interval: u64,
 }
 
 pub struct Piece {
@@ -237,15 +240,31 @@ impl Download {
             downloaded: false,
             recently_downloaded_pieces: Vec::new(),
             stats: Stats::new(),
+            last_check_with_tracker: std::time::SystemTime::UNIX_EPOCH,
+            tracker_interval: 60,
         };
         download.downloaded = download.get_is_downloaded();
         download
     }
 
-    pub fn register_outgoing_peer(&mut self, peer_info: PeerInfo) -> usize {
+    pub fn register_outgoing_peer(&mut self, peer_info: PeerInfo) {
+        for peer in self.peers.iter() {
+            if let Some(info) = &peer.peer_info {
+                if info.ip == peer_info.ip && info.port == peer_info.port {
+                    info!(
+                        "Skipping peer - already registered. download_id={}, ip={}, port={}",
+                        self.id, peer_info.ip, peer_info.port
+                    );
+                    return;
+                }
+            }
+        }
+        info!(
+            "Registered new peer. download_id={}, ip={}, port={}",
+            self.id, peer_info.ip, peer_info.port
+        );
         self.peers
             .push(Peer::new(None, Some(peer_info), self.pieces.len()));
-        return self.peers.len() - 1;
     }
 
     pub fn register_incoming_peer(&mut self, stream: TcpStream) -> usize {

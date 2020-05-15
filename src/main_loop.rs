@@ -33,8 +33,6 @@ use crate::util;
 
 fn reload_config(
     downloads: &mut HashMap<u32, Download>,
-    my_id: &String,
-    is_local: bool,
     persistent_states: &HashMap<u32, state_persistence::PersistentDownloadState>,
 ) {
     let entries = torrent_entries::list_torrents();
@@ -43,7 +41,7 @@ fn reload_config(
         if !downloads.contains_key(&entry.id) {
             info!("Adding entry, id={}", entry.id);
 
-            let mut download = to_download(&entry, my_id, is_local);
+            let mut download = to_download(&entry);
 
             match persistent_states.get(&download.id) {
                 Some(state) => {
@@ -63,15 +61,8 @@ fn reload_config(
     // TODO: remove removed downloads
 }
 
-fn to_download(entry: &torrent_entries::TorrentEntry, my_id: &String, is_local: bool) -> Download {
-    let mut download = Download::new(entry);
-    let announcement = announcement::get_announcement(&download, &my_id, is_local).unwrap();
-
-    for peer in announcement.peers {
-        download.register_outgoing_peer(peer);
-    }
-
-    return download;
+fn to_download(entry: &torrent_entries::TorrentEntry) -> Download {
+    Download::new(entry)
 }
 
 pub fn start(is_local: bool) {
@@ -139,43 +130,42 @@ fn handle_incoming_connection(
 }
 
 fn request_new_connections(
-    downloads: &mut HashMap<u32, Download>,
+    download: &mut Download,
     my_id: &String,
     outx: &mut Sender<OpenConnectionRequest>,
 ) {
-    for (download_id, download) in downloads {
-        let info_hash = download.info_hash.clone();
-        for (peer_id, peer) in download.peers_mut().into_iter().enumerate() {
-            if !peer.stream.is_none() {
-                continue;
-            }
-            if peer.peer_info.is_none() {
-                continue;
-            }
-
-            let peer_info = peer.peer_info.as_ref().unwrap();
-
-            if peer_info.port == 6881 {
-                // Don't connect to self.
-                // TODO: use id instead.
-                continue;
-            }
-
-            info!(
-                "Requesting connection through the channel. peer_id={}, download_id={}",
-                peer_id, download_id
-            );
-            peer.being_connected = true;
-            outx.send(OpenConnectionRequest {
-                ip: peer_info.ip.clone(),
-                port: peer_info.port.clone(),
-                my_id: my_id.clone(),
-                peer_id: peer_id,
-                download_id: *download_id as usize,
-                info_hash: info_hash.clone(),
-            })
-            .expect("Expected send to succeed");
+    let info_hash = download.info_hash.clone();
+    let download_id = download.id.clone();
+    for (peer_id, peer) in download.peers_mut().into_iter().enumerate() {
+        if !peer.stream.is_none() {
+            continue;
         }
+        if peer.peer_info.is_none() {
+            continue;
+        }
+
+        let peer_info = peer.peer_info.as_ref().unwrap();
+
+        if peer_info.port == 6881 {
+            // Don't connect to self.
+            // TODO: use id instead.
+            continue;
+        }
+
+        info!(
+            "Requesting connection through the channel. peer_id={}, download_id={}",
+            peer_id, download_id
+        );
+        peer.being_connected = true;
+        outx.send(OpenConnectionRequest {
+            ip: peer_info.ip.clone(),
+            port: peer_info.port.clone(),
+            my_id: my_id.clone(),
+            peer_id: peer_id,
+            download_id: download_id as usize,
+            info_hash: info_hash.clone(),
+        })
+        .expect("Expected send to succeed");
     }
 }
 
@@ -206,6 +196,29 @@ fn request_resetting_broken_connections(
             })
             .expect("Expected send to succeed");
         }
+    }
+}
+
+fn request_checking_with_tracker(
+    downloads: &mut HashMap<u32, Download>,
+    my_id: &String,
+    is_local: bool,
+    outx: &mut Sender<announcement::GetAnnouncementRequest>,
+) {
+    for (download_id, download) in downloads {
+        // TODO: to decider?
+        if download.last_check_with_tracker.elapsed().unwrap() < std::time::Duration::from_secs(3) {
+            continue;
+        }
+        download.last_check_with_tracker = std::time::SystemTime::now();
+        outx.send(announcement::GetAnnouncementRequest {
+            url: download.announcement_url.clone(),
+            info_hash: download.info_hash.clone(),
+            is_local: is_local,
+            my_id: my_id.clone(),
+            download_id: *download_id,
+        })
+        .unwrap();
     }
 }
 
@@ -257,6 +270,44 @@ fn process_new_connections(
     }
 }
 
+fn process_new_announcements(
+    downloads: &mut HashMap<u32, Download>,
+    my_id: &String,
+    inx: &Receiver<announcement::GetAnnouncementResponse>,
+    open_connection_request_sender: &mut Sender<OpenConnectionRequest>,
+) {
+    debug!("Processing announcements connections");
+
+    loop {
+        match inx.try_recv() {
+            Ok(response_res) => match response_res.result {
+                Ok(result) => {
+                    info!(
+                        "Received new announcement. download_id={}, interval={}, num_peers={}",
+                        response_res.download_id,
+                        result.interval,
+                        result.peers.len()
+                    );
+                    let download = downloads.get_mut(&response_res.download_id).unwrap();
+                    for peer in result.peers {
+                        download.register_outgoing_peer(peer);
+                    }
+                    request_new_connections(download, my_id, open_connection_request_sender)
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to get announcement, download_id={}, {:?}",
+                        response_res.download_id, e
+                    );
+                }
+            },
+            Err(_) => {
+                break;
+            }
+        }
+    }
+}
+
 fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: bool) {
     let persistent_state_location = format!("{}/{}", util::config_directory(), "state.json");
     let initial_persistent_state = state_persistence::load(&persistent_state_location);
@@ -267,7 +318,7 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: b
 
     let mut last_state_persistence = std::time::SystemTime::now();
 
-    reload_config(downloads, &my_id, is_local, &initial_persistent_state);
+    reload_config(downloads, &initial_persistent_state);
 
     let (mut open_connections_request_sender, open_connections_request_receiver): (
         Sender<OpenConnectionRequest>,
@@ -278,21 +329,35 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: b
         Receiver<OpenConnectionResponse>,
     ) = mpsc::channel();
 
-    // TODO: periodically open missing connections
     thread::spawn(move || {
         open_missing_connections(
             open_connections_request_receiver,
             open_connections_response_sender,
         );
     });
-    request_new_connections(downloads, &my_id, &mut open_connections_request_sender);
+
+    let (mut get_announcement_request_sender, get_announcement_request_receiver): (
+        Sender<announcement::GetAnnouncementRequest>,
+        Receiver<announcement::GetAnnouncementRequest>,
+    ) = mpsc::channel();
+    let (get_announcement_response_sender, get_announcement_response_receiver): (
+        Sender<announcement::GetAnnouncementResponse>,
+        Receiver<announcement::GetAnnouncementResponse>,
+    ) = mpsc::channel();
+
+    thread::spawn(move || {
+        announcement::get_announcements(
+            get_announcement_request_receiver,
+            get_announcement_response_sender,
+        );
+    });
 
     loop {
         info!("Main loop iteration #{}", iteration);
 
         if iteration % 100 == 0 {
             info!("Reloading config on iteration {}", iteration);
-            reload_config(downloads, &my_id, is_local, &initial_persistent_state);
+            reload_config(downloads, &initial_persistent_state);
         }
 
         if last_state_persistence.elapsed().unwrap() > std::time::Duration::from_secs(3) {
@@ -300,7 +365,20 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: b
             last_state_persistence = std::time::SystemTime::now();
         }
 
+        request_checking_with_tracker(
+            downloads,
+            &my_id,
+            is_local,
+            &mut get_announcement_request_sender,
+        );
+
         process_new_connections(downloads, &open_connections_response_receiver);
+        process_new_announcements(
+            downloads,
+            &my_id,
+            &get_announcement_response_receiver,
+            &mut open_connections_request_sender,
+        );
         receive_incoming_connections(&mut tcp_listener, my_id, downloads);
         receive_messages(downloads);
         broadcast_have(downloads);

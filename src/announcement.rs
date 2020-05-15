@@ -8,7 +8,9 @@ use serde_bencode::de;
 
 use log::*;
 
-use crate::download::*;
+use std::sync::mpsc::{Receiver, Sender};
+
+use std::{thread, time};
 
 use serde_bytes::ByteBuf;
 
@@ -30,13 +32,51 @@ struct AnnouncementAltPeers {
     peers: ByteBuf,
 }
 
-pub fn get_announcement(
-    download: &Download,
+pub struct GetAnnouncementRequest {
+    pub url: String,
+    pub my_id: String,
+    pub info_hash: Vec<u8>,
+    pub is_local: bool,
+    pub download_id: u32,
+}
+
+pub struct GetAnnouncementResponse {
+    pub download_id: u32,
+    pub result: Result<Announcement, Error>,
+}
+
+pub fn get_announcements(
+    inx: Receiver<GetAnnouncementRequest>,
+    outx: Sender<GetAnnouncementResponse>,
+) {
+    loop {
+        let request_opt = inx.recv();
+        if request_opt.is_err() {
+            thread::sleep(time::Duration::from_secs(1));
+            continue;
+        }
+        let request = request_opt.unwrap();
+
+        outx.send(GetAnnouncementResponse {
+            result: get_announcement(
+                &request.url,
+                &request.info_hash,
+                &request.my_id,
+                request.is_local,
+            ),
+            download_id: request.download_id,
+        })
+        .unwrap();
+    }
+}
+
+fn get_announcement(
+    url: &String,
+    info_hash: &Vec<u8>,
     peer_id: &String,
     is_local: bool,
 ) -> Result<Announcement, Error> {
     let client = reqwest::Client::new();
-    let info_hash = &download.info_hash;
     let urlencodedih: String = info_hash
         .iter()
         .map(|byte| percent_encode_byte(*byte))
@@ -49,11 +89,7 @@ pub fn get_announcement(
         ("port", "6881".to_string()),
         ("left", "0".to_string()),
     ];
-    let request = client
-        .get(&download.announcement_url)
-        .query(&query)
-        .build()
-        .unwrap();
+    let request = client.get(url).query(&query).build().unwrap();
 
     let url = request.url();
     let url = format!("{}&info_hash={}", url, urlencodedih);
