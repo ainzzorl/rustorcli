@@ -38,6 +38,8 @@ pub struct GetAnnouncementRequest {
     pub info_hash: Vec<u8>,
     pub is_local: bool,
     pub download_id: u32,
+    pub downloaded: u32,
+    pub uploaded: u32,
 }
 
 pub struct GetAnnouncementResponse {
@@ -58,12 +60,7 @@ pub fn get_announcements(
         let request = request_opt.unwrap();
 
         outx.send(GetAnnouncementResponse {
-            result: get_announcement(
-                &request.url,
-                &request.info_hash,
-                &request.my_id,
-                request.is_local,
-            ),
+            result: get_announcement(&request),
             download_id: request.download_id,
         })
         .unwrap();
@@ -71,32 +68,34 @@ pub fn get_announcements(
 }
 
 fn get_announcement(
-    url: &String,
-    info_hash: &Vec<u8>,
-    peer_id: &String,
-    is_local: bool,
+    get_announcement_request: &GetAnnouncementRequest,
 ) -> Result<Announcement, Error> {
     let client = reqwest::Client::new();
-    let urlencodedih: String = info_hash
+    let urlencodedih: String = get_announcement_request
+        .info_hash
         .iter()
         .map(|byte| percent_encode_byte(*byte))
         .collect();
 
     let query = [
-        ("peer_id", peer_id.clone()),
-        ("uploaded", "0".to_string()),
-        ("downloaded", "0".to_string()),
+        ("peer_id", get_announcement_request.my_id.clone()),
+        ("uploaded", get_announcement_request.downloaded.to_string()),
+        ("downloaded", get_announcement_request.uploaded.to_string()),
         ("port", "6881".to_string()),
         ("left", "0".to_string()),
     ];
-    let request = client.get(url).query(&query).build().unwrap();
+    let request = client
+        .get(&get_announcement_request.url)
+        .query(&query)
+        .build()
+        .unwrap();
 
     let url = request.url();
     let url = format!("{}&info_hash={}", url, urlencodedih);
     info!("Announcement URL: {}", url);
 
     let mut req_builder = client.get(&url);
-    if is_local {
+    if get_announcement_request.is_local {
         req_builder = req_builder.header("x-forwarded-for", "127.0.0.1");
     }
     let mut response = req_builder.send()?;

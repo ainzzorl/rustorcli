@@ -207,7 +207,9 @@ fn request_checking_with_tracker(
 ) {
     for (download_id, download) in downloads {
         // TODO: to decider?
-        if download.last_check_with_tracker.elapsed().unwrap() < std::time::Duration::from_secs(3) {
+        if download.last_check_with_tracker.elapsed().unwrap()
+            < std::time::Duration::from_secs(download.tracker_interval)
+        {
             continue;
         }
         download.last_check_with_tracker = std::time::SystemTime::now();
@@ -217,6 +219,8 @@ fn request_checking_with_tracker(
             is_local: is_local,
             my_id: my_id.clone(),
             download_id: *download_id,
+            downloaded: download.stats().downloaded,
+            uploaded: download.stats().uploaded,
         })
         .unwrap();
     }
