@@ -117,6 +117,8 @@ pub struct PieceInfo {
 
 pub struct Peer {
     pub stream: Option<TcpStream>,
+    pub buf: Vec<u8>,
+    pub next_message_length: u32,
 
     pub we_interested: bool,
     pub we_choked: bool,
@@ -136,6 +138,8 @@ impl Peer {
     pub fn new(stream: Option<TcpStream>, peer_info: Option<PeerInfo>, num_pieces: usize) -> Peer {
         Peer {
             stream: stream,
+            buf: Vec::new(),
+            next_message_length: 0,
             peer_info: peer_info,
             we_interested: false,
             we_choked: true,
@@ -447,6 +451,8 @@ impl Download {
             self.id, peer_id
         );
         self.peers[peer_id].stream = None;
+        self.peers[peer_id].buf = Vec::new();
+        self.peers[peer_id].next_message_length = 0;
     }
 
     fn on_done(&self) {

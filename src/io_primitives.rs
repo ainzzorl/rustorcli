@@ -65,3 +65,20 @@ fn read_n_to_buf(
         }
     }
 }
+
+pub fn read_upto_n_nonblocking(
+    stream: &TcpStream,
+    buf: &mut Vec<u8>,
+    bytes_to_read: u32,
+) -> Result<(), std::io::Error> {
+    if bytes_to_read == 0 {
+        return Ok(());
+    }
+    stream.set_nonblocking(true).unwrap();
+    let bytes_read = stream.take(bytes_to_read as u64).read_to_end(buf);
+    match bytes_read {
+        Ok(0) => return Err(std::io::Error::new(io::ErrorKind::Other, "Read 0 bytes!")),
+        Ok(_) => Ok(()),
+        Err(e) => Err(e),
+    }
+}

@@ -223,31 +223,61 @@ pub fn send_block(download: &mut Download, request: &IncomingBlockRequest) {
 }
 
 pub fn receive_message(
-    stream: &mut TcpStream,
+    peer: &mut Peer,
     download_id: usize,
     peer_id: usize,
 ) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
     debug!("Getting message size... peer_id={}", peer_id);
-    match io_primitives::read_n(&stream, 4, false) {
-        Ok(sizebytes) => {
-            let message_size = io_primitives::bytes_to_u32(&sizebytes);
-            debug!("Message size: {}", message_size);
-            if message_size == 0 {
-                debug!("Looks like keepalive");
+    let stream: &mut TcpStream = peer.stream.as_mut().unwrap();
+    if peer.next_message_length == 0 {
+        match io_primitives::read_n(&stream, 4, false) {
+            Ok(sizebytes) => {
+                let message_size = io_primitives::bytes_to_u32(&sizebytes);
+                if message_size == 0 {
+                    debug!("Looks like keepalive");
+                    return Ok(None);
+                }
+                trace!("Message size: {}", message_size);
+                peer.next_message_length = message_size;
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                debug!(
+                    "Would-block error from peer_id={} - returning empty",
+                    peer_id
+                );
                 return Ok(None);
             }
-            debug!("Reading message payload...");
-            match io_primitives::read_n(&stream, message_size, true) {
-                Ok(message) => Ok(Some(message)),
-                Err(e) => {
-                    warn!(
-                        "Error reading message, download_id={} peer_id={}: {:?}, resetting connection",
-                        download_id, peer_id, e);
-                    Err(std::boxed::Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        "Read reading message after getting size",
-                    )))
-                }
+            Err(e) => {
+                warn!(
+                    "Unexpected error, dowload_id={}, peer_id={}: {:?}",
+                    download_id, peer_id, e
+                );
+                return Err(std::boxed::Box::new(e));
+            }
+        }
+    }
+
+    let remaining = peer.next_message_length - peer.buf.len() as u32;
+    trace!(
+        "Remaining to read: {}/{}",
+        remaining,
+        peer.next_message_length
+    );
+    match io_primitives::read_upto_n_nonblocking(&stream, &mut peer.buf, remaining) {
+        Ok(_) => {
+            if peer.buf.len() == peer.next_message_length as usize {
+                let result = peer.buf.clone();
+                peer.buf = Vec::new();
+                peer.next_message_length = 0;
+                trace!("Successfully read the message of len {}", result.len());
+                return Ok(Some(result));
+            } else {
+                debug!(
+                    "Haven't read enough yet: {}/{}",
+                    peer.buf.len(),
+                    peer.next_message_length
+                );
+                return Ok(None);
             }
         }
         Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -255,14 +285,14 @@ pub fn receive_message(
                 "Would-block error from peer_id={} - returning empty",
                 peer_id
             );
-            Ok(None)
+            return Ok(None);
         }
         Err(e) => {
             warn!(
                 "Unexpected error, dowload_id={}, peer_id={}: {:?}",
                 download_id, peer_id, e
             );
-            Err(std::boxed::Box::new(e))
+            return Err(std::boxed::Box::new(e));
         }
     }
 }

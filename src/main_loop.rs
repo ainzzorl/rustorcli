@@ -497,14 +497,15 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
         let mut to_process = Vec::new();
         let mut peers_to_reset: Vec<usize> = Vec::new();
         let peers = download.peers_mut();
-        for (peer_id, peer) in peers.into_iter().enumerate() {
+        for (peer_id, p) in peers.into_iter().enumerate() {
+            let mut peer = p;
             if peer.stream.is_none() {
                 continue;
             }
-            let stream: &mut TcpStream = peer.stream.as_mut().unwrap();
+            //let stream: &mut TcpStream = peer.stream.as_mut().unwrap();
             for _ in 0..100 {
                 // Guard against too many incoming messages
-                match peer_protocol::receive_message(stream, *download_id as usize, peer_id) {
+                match peer_protocol::receive_message(&mut peer, *download_id as usize, peer_id) {
                     Ok(Some(message)) => {
                         to_process.push(Msg {
                             message: message,
