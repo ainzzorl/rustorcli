@@ -1,3 +1,9 @@
+build-release :
+			 cargo build --release
+
+install : build-release
+			 sudo cp target/release/rustorcli /usr/local/bin/
+
 test :
 			 RUST_BACKTRACE=1 RUST_LOG=rustorcli=trace cargo test -- --test-threads=1
 
