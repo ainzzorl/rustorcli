@@ -197,9 +197,10 @@ fn remove(id: &str) {
 }
 
 fn list() {
+    let separator = "################################################################################";
     let entries = torrent_entries::list_torrents();
     let states = state_persistence::load(&format!("{}/{}", util::config_directory(), "state.json"));
-    for entry in entries {
+    for (cnt, entry) in entries.iter().enumerate() {
         let mut downloaded = String::from("?");
         let mut uploaded = String::from("?");
         match states.get(&entry.id) {
@@ -209,9 +210,14 @@ fn list() {
             }
             None => {}
         }
-        println!(
-            "{} - {} - {}. Downloaded: {}. Uploaded: {}.",
-            entry.id, entry.torrent_path, entry.download_path, downloaded, uploaded
-        );
+        println!("{}", separator);
+        println!("Id: {}", entry.id);
+        println!("Torrent: {}", entry.torrent_path);
+        println!("Destination: {}", entry.download_path);
+        println!("Downloaded: {}", downloaded);
+        println!("Uploaded: {}", uploaded);
+        if cnt == entries.len() - 1 {
+            println!("{}", separator);
+        }
     }
 }
