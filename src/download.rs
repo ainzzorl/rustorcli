@@ -150,6 +150,14 @@ impl Peer {
             being_connected: false,
         }
     }
+
+    pub fn is_incoming(&self) -> bool {
+        self.peer_info.is_none()
+    }
+
+    pub fn is_connected(&self) -> bool {
+        self.stream.is_some()
+    }
 }
 
 pub struct Stats {

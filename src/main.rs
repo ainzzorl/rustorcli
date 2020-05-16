@@ -197,16 +197,36 @@ fn remove(id: &str) {
 }
 
 fn list() {
-    let separator = "################################################################################";
+    let separator =
+        "################################################################################";
     let entries = torrent_entries::list_torrents();
     let states = state_persistence::load(&format!("{}/{}", util::config_directory(), "state.json"));
     for (cnt, entry) in entries.iter().enumerate() {
+        let mut done = String::from("?");
         let mut downloaded = String::from("?");
         let mut uploaded = String::from("?");
+        let mut size = String::from("?");
+        let mut total_peers = String::from("?");
+        let mut incoming_peers = String::from("?");
+        let mut outgoing_peers = String::from("?");
+        let mut connected_peers = String::from("?");
+        let mut downloaded_pieces = String::from("?");
+        let mut total_pieces = String::from("?");
+        let mut pieces_ratio = String::from("?");
         match states.get(&entry.id) {
             Some(state) => {
                 downloaded = state.downloaded.to_string();
                 uploaded = state.uploaded.to_string();
+                size = state.total_size.to_string();
+                done = state.done.to_string();
+                total_peers = (state.incoming_peers + state.outgoing_peers).to_string();
+                incoming_peers = state.incoming_peers.to_string();
+                outgoing_peers = state.outgoing_peers.to_string();
+                connected_peers = state.connected_peers.to_string();
+                total_pieces = state.total_pieces.to_string();
+                downloaded_pieces = state.downloaded_pieces.to_string();
+                let ratio = state.downloaded_pieces as f64 / state.total_pieces as f64;
+                pieces_ratio = format!("{:.4}", ratio * 100f64);
             }
             None => {}
         }
@@ -214,8 +234,18 @@ fn list() {
         println!("Id: {}", entry.id);
         println!("Torrent: {}", entry.torrent_path);
         println!("Destination: {}", entry.download_path);
-        println!("Downloaded: {}", downloaded);
-        println!("Uploaded: {}", uploaded);
+        println!("Done: {}", done);
+        println!("Size: {} bytes", size);
+        println!("Downloaded: {} bytes", downloaded);
+        println!("Uploaded: {} bytes", uploaded);
+        println!(
+            "Have {}% of all pieces ({}/{})",
+            pieces_ratio, downloaded_pieces, total_pieces
+        );
+        println!(
+            "Connected to {} peer(s) of total {} ({} incoming + {} outgoing)",
+            connected_peers, total_peers, incoming_peers, outgoing_peers
+        );
         if cnt == entries.len() - 1 {
             println!("{}", separator);
         }
