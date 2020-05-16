@@ -131,7 +131,7 @@ mod e2e_tests {
             clients: vec![
                 Client {
                     client_type: ClientType::RUSTORCLI,
-                    starting_files: vec![String::from("generated/torrent_a_data")],
+                    starting_files: vec![String::from("torrent_a_data")],
                     expected_files: vec![String::from("torrent_a_data")],
                     torrents: vec![String::from("torrent_a_data.torrent")],
                 },
@@ -156,7 +156,6 @@ mod e2e_tests {
         println!("Copying files");
         for client in definition.clients.iter() {
             for file in client.starting_files.iter() {
-                println!("Copying {} to {}", format!("./tests/data/generated/{}", file), format!("{}/{}", client.directory(), file));
                 fs::copy(
                     format!("./tests/data/generated/{}", file),
                     format!("{}/{}", client.directory(), file),
