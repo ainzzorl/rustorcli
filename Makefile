@@ -1,3 +1,10 @@
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+	CONFIG_PATH := "$$HOME/Library/Application Support/rustorcli/"
+else
+	CONFIG_PATH := "$$HOME/.rustorcli/"
+endif
+
 build-release :
 			 cargo build --release
 
@@ -29,15 +36,14 @@ cleanup:
 			 killall rustorcli || true
 			 lsof -i:8000 | awk 'NR!=1 {print $$2}' | xargs kill -9
 			 rm -rf target/tmp/
-			 # TODO: other OS
-			 rm -rf "$$HOME/Library/Application Support/rustorcli/"
+			 rm -rf $(CONFIG_PATH)
 
 test-all: test e2e cleanup
 
 run-current:
 			 mkdir -p target/tmp/current
 			 cargo run stop
-			 rm -rf "$$HOME/Library/Application Support/rustorcli/"
+			 rm -rf $(CONFIG_PATH)
 			 cargo run add -t "$$(pwd)/data/current.torrent" -d "$$(pwd)/target/tmp/current"
 			 RUST_LOG=trace cargo run start
 
