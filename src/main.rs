@@ -141,6 +141,10 @@ fn start(pid_opt: Option<i32>, is_local: bool) {
 }
 
 fn run(is_local: bool) {
+    if std::env::var("RUST_LOG").is_err() {
+        std::env::set_var("RUST_LOG", "rustorcli=info");
+    }
+
     let mut builder = env_logger::Builder::from_default_env();
     builder.target(env_logger::Target::Stdout);
     builder.init();
