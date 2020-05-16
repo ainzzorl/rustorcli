@@ -39,3 +39,6 @@ install-test-dependencies:
 			 sudo npm install -g bittorrent-tracker
 			 sudo npm install -g webtorrent-cli
 			 sudo apt install transmission-cli
+
+generate-test-data:
+			 python tests/generate_test_data.py

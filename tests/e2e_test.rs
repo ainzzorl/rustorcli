@@ -29,7 +29,6 @@ mod e2e_tests {
     static ATTEMPTS: u32 = 100;
     static BETWEEN_ATTEMPTS: Duration = time::Duration::from_secs(1);
 
-    // TODO: version control test files, or generate them on the fly
     // TODO: don't ignore, somehow
 
     #[test]
@@ -132,7 +131,7 @@ mod e2e_tests {
             clients: vec![
                 Client {
                     client_type: ClientType::RUSTORCLI,
-                    starting_files: vec![String::from("torrent_a_data")],
+                    starting_files: vec![String::from("generated/torrent_a_data")],
                     expected_files: vec![String::from("torrent_a_data")],
                     torrents: vec![String::from("torrent_a_data.torrent")],
                 },
@@ -157,8 +156,9 @@ mod e2e_tests {
         println!("Copying files");
         for client in definition.clients.iter() {
             for file in client.starting_files.iter() {
+                println!("Copying {} to {}", format!("./tests/data/generated/{}", file), format!("{}/{}", client.directory(), file));
                 fs::copy(
-                    format!("./data/{}", file),
+                    format!("./tests/data/generated/{}", file),
                     format!("{}/{}", client.directory(), file),
                 )?;
             }
@@ -202,7 +202,7 @@ mod e2e_tests {
 
             for client in definition.clients.iter() {
                 for file in client.expected_files.iter() {
-                    let origin_path = format!("./data/{}", file);
+                    let origin_path = format!("./tests/data/generated/{}", file);
                     let destination_path = format!("{}/{}", client.directory(), file);
 
                     let expected_hash = get_hash(&origin_path);
@@ -371,7 +371,7 @@ mod e2e_tests {
                             .unwrap()
                             .arg("add")
                             .arg("-t")
-                            .arg(get_absolute(format!("./data/{}", file).as_str()))
+                            .arg(get_absolute(format!("./tests/data/{}", file).as_str()))
                             .arg("-d")
                             .arg(get_absolute(self.directory().as_str()))
                             .assert()
@@ -399,7 +399,7 @@ mod e2e_tests {
                                 .stdout(Stdio::null())
                                 .stderr(Stdio::null())
                                 .arg("seed")
-                                .arg(format!("./data/{}", file.as_str()))
+                                .arg(format!("./tests/data/{}", file.as_str()))
                                 .arg("-o")
                                 .arg(self.directory())
                                 .arg("--keep-seeding")
@@ -410,7 +410,7 @@ mod e2e_tests {
                                 .stdout(Stdio::null())
                                 .stderr(Stdio::null())
                                 .arg("download")
-                                .arg(format!("./data/{}", file.as_str()))
+                                .arg(format!("./tests/data/{}", file.as_str()))
                                 .arg("-o")
                                 .arg(self.temp_directory())
                                 .arg("--on-done")
@@ -442,7 +442,7 @@ mod e2e_tests {
                         run_until_success(
                             Command::new("transmission-remote")
                                 .arg("-a")
-                                .arg(format!("./data/{}", file.as_str())),
+                                .arg(format!("./tests/data/{}", file.as_str())),
                         );
                     }
                 }
