@@ -34,3 +34,8 @@ run-current:
 			 rm -rf "$$HOME/Library/Application Support/rustorcli/"
 			 cargo run add -t "$$(pwd)/data/current.torrent" -d "$$(pwd)/target/tmp/current"
 			 RUST_LOG=trace cargo run start
+
+install-test-dependencies:
+			 sudo npm install -g bittorrent-tracker
+			 sudo npm install -g webtorrent-cli
+			 sudo apt install transmission-cli
