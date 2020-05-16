@@ -79,8 +79,8 @@ fn get_announcement(
 
     let query = [
         ("peer_id", get_announcement_request.my_id.clone()),
-        ("uploaded", get_announcement_request.downloaded.to_string()),
-        ("downloaded", get_announcement_request.uploaded.to_string()),
+        ("uploaded", get_announcement_request.uploaded.to_string()),
+        ("downloaded", get_announcement_request.downloaded.to_string()),
         ("port", "6881".to_string()),
         ("left", "0".to_string()),
     ];
