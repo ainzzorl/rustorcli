@@ -72,31 +72,9 @@ pub fn get_announcements(
 fn get_announcement(
     get_announcement_request: &GetAnnouncementRequest,
 ) -> Result<Announcement, Error> {
+    info!("Reaching out for announcement");
     let client = reqwest::Client::new();
-    let urlencodedih: String = get_announcement_request
-        .info_hash
-        .iter()
-        .map(|byte| percent_encode_byte(*byte))
-        .collect();
-
-    let query = [
-        ("peer_id", get_announcement_request.my_id.clone()),
-        ("uploaded", get_announcement_request.uploaded.to_string()),
-        (
-            "downloaded",
-            get_announcement_request.downloaded.to_string(),
-        ),
-        ("port", config::PORT.to_string()),
-        ("left", "0".to_string()),
-    ];
-    let request = client
-        .get(&get_announcement_request.url)
-        .query(&query)
-        .build()
-        .unwrap();
-
-    let url = request.url();
-    let url = format!("{}&info_hash={}", url, urlencodedih);
+    let url = construct_url(get_announcement_request, &client);
     info!("Announcement URL: {}", url);
 
     let mut req_builder = client.get(&url);
@@ -114,26 +92,17 @@ fn get_announcement(
     match de::from_bytes::<Announcement>(&buffer) {
         Ok(t) => announcement = t,
         Err(e) => {
-            info!(
+            debug!(
                 "Could not parse tracker response: {:?}. Tring alternative structure...",
                 e
             );
             match de::from_bytes::<AnnouncementAltPeers>(&buffer) {
                 Ok(announcement_alt) => {
-                    info!("Managed to parse alternative announcement!");
+                    debug!("Managed to parse alternative announcement!");
                     let peers = announcement_alt.peers;
                     let num_peers = peers.len() / 6;
                     let mut peers_parsed: Vec<PeerInfo> = vec![];
                     for i in 0..num_peers {
-                        info!("peer_id=#{}", i);
-                        info!(
-                            "{}.{}.{}.{}:{}",
-                            peers[i * 6],
-                            peers[i * 6 + 1],
-                            peers[i * 6 + 2],
-                            peers[i * 6 + 3],
-                            (peers[i * 6 + 4] as u32) * 256 + (peers[i * 6 + 5] as u32)
-                        );
                         let peer_info = PeerInfo {
                             port: (peers[i * 6 + 4] as u32) * 256 + (peers[i * 6 + 5] as u32),
                             ip: format!(
@@ -165,7 +134,7 @@ fn get_announcement(
     info!("Num peers: {}", announcement.peers.len());
 
     for peer in &announcement.peers {
-        info!("Peer - {}:{}", peer.ip, peer.port);
+        debug!("Peer - {}:{}", peer.ip, peer.port);
     }
 
     return Ok(announcement);
@@ -178,4 +147,40 @@ fn show(bs: &Vec<u8>) -> String {
         visible.push_str(std::str::from_utf8(&part).unwrap());
     }
     visible
+}
+
+fn construct_url(
+    get_announcement_request: &GetAnnouncementRequest,
+    client: &reqwest::Client,
+) -> String {
+    let query = [
+        ("peer_id", get_announcement_request.my_id.clone()),
+        ("uploaded", get_announcement_request.uploaded.to_string()),
+        (
+            "downloaded",
+            get_announcement_request.downloaded.to_string(),
+        ),
+        ("port", config::PORT.to_string()),
+        ("left", "0".to_string()),
+    ];
+    let request = client
+        .get(&get_announcement_request.url)
+        .query(&query)
+        .build()
+        .unwrap();
+
+    let url = request.url();
+    let url = format!(
+        "{}&info_hash={}",
+        url,
+        encode_info_hash(&get_announcement_request.info_hash)
+    );
+    return url;
+}
+
+fn encode_info_hash(info_hash: &Vec<u8>) -> String {
+    return info_hash
+        .iter()
+        .map(|byte| percent_encode_byte(*byte))
+        .collect();
 }
