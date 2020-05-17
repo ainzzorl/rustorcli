@@ -14,10 +14,12 @@ use std::{thread, time};
 
 use serde_bytes::ByteBuf;
 
+use crate::config;
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct PeerInfo {
     pub ip: String,
-    pub port: u64,
+    pub port: u32,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -80,8 +82,11 @@ fn get_announcement(
     let query = [
         ("peer_id", get_announcement_request.my_id.clone()),
         ("uploaded", get_announcement_request.uploaded.to_string()),
-        ("downloaded", get_announcement_request.downloaded.to_string()),
-        ("port", "6881".to_string()),
+        (
+            "downloaded",
+            get_announcement_request.downloaded.to_string(),
+        ),
+        ("port", config::PORT.to_string()),
         ("left", "0".to_string()),
     ];
     let request = client
@@ -130,7 +135,7 @@ fn get_announcement(
                             (peers[i * 6 + 4] as u32) * 256 + (peers[i * 6 + 5] as u32)
                         );
                         let peer_info = PeerInfo {
-                            port: (peers[i * 6 + 4] as u64) * 256 + (peers[i * 6 + 5] as u64),
+                            port: (peers[i * 6 + 4] as u32) * 256 + (peers[i * 6 + 5] as u32),
                             ip: format!(
                                 "{}.{}.{}.{}",
                                 peers[i * 6],

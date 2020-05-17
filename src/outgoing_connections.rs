@@ -10,7 +10,7 @@ use crate::handshake::handshake;
 
 pub struct OpenConnectionRequest {
     pub ip: String,
-    pub port: u64,
+    pub port: u32,
     pub my_id: String,
     pub info_hash: Vec<u8>,
     pub download_id: usize,

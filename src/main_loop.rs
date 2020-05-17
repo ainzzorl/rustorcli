@@ -21,6 +21,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use log::*;
 
 use crate::announcement;
+use crate::config;
 use crate::decider::*;
 use crate::download::Download;
 use crate::download::Stats;
@@ -146,7 +147,7 @@ fn request_new_connections(
 
         let peer_info = peer.peer_info.as_ref().unwrap();
 
-        if peer_info.port == 6881 {
+        if peer_info.port == config::PORT {
             // Don't connect to self.
             // TODO: use id instead.
             continue;
@@ -316,7 +317,7 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: b
     let persistent_state_location = format!("{}/{}", util::config_directory(), "state.json");
     let initial_persistent_state = state_persistence::load(&persistent_state_location);
 
-    let mut tcp_listener = start_listeners(6881);
+    let mut tcp_listener = start_listeners(config::PORT);
 
     let mut iteration = 0;
 
@@ -532,7 +533,7 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
     }
 }
 
-pub fn start_listeners(port: u16) -> TcpListener {
+pub fn start_listeners(port: u32) -> TcpListener {
     info!("Starting to listen on port {}", port);
     let tcp_listener = TcpListener::bind(format!("0.0.0.0:{}", port)).unwrap();
     tcp_listener.set_nonblocking(true).unwrap();

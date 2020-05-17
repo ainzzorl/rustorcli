@@ -1,4 +1,5 @@
 pub mod announcement;
+pub mod config;
 pub mod decider;
 pub mod download;
 pub mod handshake;

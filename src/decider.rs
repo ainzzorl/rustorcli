@@ -2,6 +2,7 @@ use std::time::{Duration, SystemTime};
 
 use log::*;
 
+use crate::config;
 use crate::download::{BlockRequestRecord, Download, IncomingBlockRequest};
 
 static REQUEST_EXPIRATION: Duration = Duration::from_secs(30);
@@ -113,7 +114,7 @@ pub fn decide_peers_to_reconnect(download: &Download) -> Vec<usize> {
         }
         match &peer.peer_info {
             Some(peer_info) => {
-                if peer_info.port == 6881 {
+                if peer_info.port == config::PORT {
                     // Don't connect to self.
                     // TODO: use id instead.
                     continue;

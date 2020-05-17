@@ -4,6 +4,7 @@ extern crate daemonize;
 extern crate sysinfo;
 
 pub mod announcement;
+pub mod config;
 pub mod decider;
 pub mod download;
 pub mod handshake;
