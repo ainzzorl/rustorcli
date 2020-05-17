@@ -224,7 +224,7 @@ fn process_new_connections(
     downloads: &mut HashMap<u32, Download>,
     inx: &Receiver<OpenConnectionResponse>,
 ) {
-    info!("Processing established connections");
+    trace!("Processing established connections");
 
     loop {
         match inx.try_recv() {
