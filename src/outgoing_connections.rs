@@ -6,7 +6,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
 use std::{thread, time};
 
-use crate::handshake::handshake;
+use crate::handshake::handshake_outgoing;
 
 pub struct OpenConnectionRequest {
     pub ip: String,
@@ -87,7 +87,7 @@ pub fn open_missing_connections(
         match TcpStream::connect_timeout(&socket_address, Duration::from_secs(1)) {
             Ok(mut stream) => {
                 info!("Connected to the peer!");
-                match handshake(&mut stream, &request.info_hash, &request.my_id) {
+                match handshake_outgoing(&mut stream, &request.info_hash, &request.my_id) {
                     Ok(()) => {
                         stream.set_nonblocking(true).unwrap();
                         outx.send(Ok(OpenConnectionResponseBody {
