@@ -126,7 +126,7 @@ pub fn request_block(
     return Ok(());
 }
 
-pub fn send_bitfield(peer_id: usize, download: &mut Download) {
+pub fn send_bitfield(peer_id: usize, download: &mut Download) -> Result<(), std::io::Error> {
     info!(
         "Sending bitfield to peer_id={}, download_id={}",
         peer_id, download.id
@@ -150,7 +150,7 @@ pub fn send_bitfield(peer_id: usize, download: &mut Download) {
         .as_mut()
         .expect("Expected the stream to be present");
 
-    send_message(s, TYPE_BITFIELD, &payload).unwrap();
+    send_message(s, TYPE_BITFIELD, &payload)
 }
 
 fn on_bitfield(message: Vec<u8>, download: &mut Download, peer_id: usize) {
@@ -188,7 +188,7 @@ fn on_have(message: Vec<u8>, download: &mut Download, peer_id: usize) {
     download.peer_mut(peer_id).has_piece[piece_id] = true;
 }
 
-pub fn send_unchoke(peer_id: usize, download: &mut Download) {
+pub fn send_unchoke(peer_id: usize, download: &mut Download) -> Result<(), std::io::Error> {
     info!(
         "Sending unchoked to peer_id={}, download_id={}",
         peer_id, download.id
@@ -200,10 +200,13 @@ pub fn send_unchoke(peer_id: usize, download: &mut Download) {
         .as_mut()
         .expect("Expected the stream to be present");
 
-    send_message(s, TYPE_UNCHOKED, &Vec::new()).unwrap();
+    send_message(s, TYPE_UNCHOKED, &Vec::new())
 }
 
-pub fn send_block(download: &mut Download, request: &IncomingBlockRequest) {
+pub fn send_block(
+    download: &mut Download,
+    request: &IncomingBlockRequest,
+) -> Result<(), std::io::Error> {
     let mut file = &download.file;
 
     let seek_pos: u64 = ((request.piece_id as i64) * (download.piece_length as i64)
@@ -227,8 +230,9 @@ pub fn send_block(download: &mut Download, request: &IncomingBlockRequest) {
     payload.extend(io_primitives::u32_to_bytes(request.begin as u32));
     payload.extend(data);
 
-    send_message(s, TYPE_PIECE, &payload).unwrap();
+    send_message(s, TYPE_PIECE, &payload)?;
     download.stats_mut().add_uploaded(blocklen as u32);
+    return Ok(());
 }
 
 pub fn receive_message(

@@ -104,9 +104,9 @@ fn handle_incoming_connection(
                     s.set_nonblocking(true).unwrap();
                     let peer_index = download.register_incoming_peer(s);
                     thread::sleep(time::Duration::from_secs(1));
-                    peer_protocol::send_bitfield(peer_index, download);
+                    peer_protocol::send_bitfield(peer_index, download).ok();
                     thread::sleep(time::Duration::from_secs(1));
-                    peer_protocol::send_unchoke(peer_index, download);
+                    peer_protocol::send_unchoke(peer_index, download).ok();
                     debug!("Done adding the connection to download");
                     break;
                 }
@@ -241,8 +241,8 @@ fn process_new_connections(
                         .expect("Download must exist");
                     download.peers_mut()[response.peer_id].stream = Some(stream);
                     download.peers_mut()[response.peer_id].being_connected = false;
-                    peer_protocol::send_bitfield(response.peer_id, download);
-                    peer_protocol::send_unchoke(response.peer_id, download);
+                    peer_protocol::send_bitfield(response.peer_id, download).ok();
+                    peer_protocol::send_unchoke(response.peer_id, download).ok();
                     if peer_protocol::send_interested(
                         &mut download.peers_mut()[response.peer_id]
                             .stream
@@ -494,7 +494,7 @@ fn execute_incoming_block_requests(downloads: &mut HashMap<u32, Download>) {
         }
 
         for request in requests {
-            peer_protocol::send_block(download, &request);
+            peer_protocol::send_block(download, &request).ok();
         }
     }
 }
