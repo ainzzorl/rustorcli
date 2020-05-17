@@ -1,3 +1,4 @@
+use crate::config;
 use crate::download::{Download, IncomingBlockRequest, Peer};
 use crate::io_primitives;
 
@@ -10,41 +11,49 @@ use std::net::TcpStream;
 
 use log::*;
 
-// TODO: constants
+const TYPE_CHOKED: u8 = 0;
+const TYPE_UNCHOKED: u8 = 1;
+const TYPE_INTERESTED: u8 = 2;
+const TYPE_NOT_INTERESTED: u8 = 3;
+const TYPE_HAVE: u8 = 4;
+const TYPE_BITFIELD: u8 = 5;
+const TYPE_REQUEST: u8 = 6;
+const TYPE_PIECE: u8 = 7;
+
 pub fn process_message(message: Vec<u8>, download: &mut Download, peer_id: usize) {
     let resptype = message[0];
     info!("Response type: {}", resptype);
     let mut peer = download.peer_mut(peer_id);
     match resptype {
-        0 => {
+        TYPE_CHOKED => {
             info!("Choked! peer_id={}", peer_id);
             peer.we_choked = true;
         }
-        1 => {
+        TYPE_UNCHOKED => {
             info!("Unchoked! peer_id={}", peer_id);
             peer.we_choked = false;
         }
-        2 => {
+        TYPE_INTERESTED => {
             info!("Interested! peer_id={}", peer_id);
             // TODO: do something
         }
-        3 => {
+        TYPE_NOT_INTERESTED => {
             info!("Not interested! peer_id={}", peer_id);
             // TODO: do something
         }
-        4 => {
+        TYPE_HAVE => {
             info!("Have! peer_id={}", peer_id);
             on_have(message, download, peer_id);
         }
-        5 => {
+        TYPE_BITFIELD => {
             info!("Bitfield! peer_id={}", peer_id);
             on_bitfield(message, download, peer_id);
         }
-        6 => {
+        TYPE_REQUEST => {
             info!("Request! peer_id={}", peer_id);
             download.add_incoming_block_request(to_incoming_block_request(peer_id, message));
         }
-        7 => {
+        TYPE_PIECE => {
             info!("Piece! download_id={}, peer_id={}", download.id, peer_id);
             on_piece(message, download, peer_id);
         }
@@ -56,7 +65,7 @@ pub fn process_message(message: Vec<u8>, download: &mut Download, peer_id: usize
 
 pub fn send_interested(stream: &mut TcpStream) -> Result<(), std::io::Error> {
     info!("Sending interested");
-    return send_message(stream, 2, &Vec::new());
+    return send_message(stream, TYPE_INTERESTED, &Vec::new());
 }
 
 pub fn send_have(
@@ -77,7 +86,7 @@ pub fn send_have(
 
     let mut payload: Vec<u8> = Vec::new();
     payload.extend(io_primitives::u32_to_bytes(piece_id as u32));
-    send_message(peer.unwrap(), 4, &payload)?;
+    send_message(peer.unwrap(), TYPE_HAVE, &payload)?;
 
     return Ok(());
 }
@@ -109,11 +118,11 @@ pub fn request_block(
             .stream
             .as_mut()
             .expect("Expect the stream to be present"),
-        6,
+        TYPE_REQUEST,
         &payload,
     )?;
 
-    info!("Done requesting block");
+    trace!("Done requesting block");
     return Ok(());
 }
 
@@ -141,7 +150,7 @@ pub fn send_bitfield(peer_id: usize, download: &mut Download) {
         .as_mut()
         .expect("Expected the stream to be present");
 
-    send_message(s, 5, &payload).unwrap();
+    send_message(s, TYPE_BITFIELD, &payload).unwrap();
 }
 
 fn on_bitfield(message: Vec<u8>, download: &mut Download, peer_id: usize) {
@@ -191,7 +200,7 @@ pub fn send_unchoke(peer_id: usize, download: &mut Download) {
         .as_mut()
         .expect("Expected the stream to be present");
 
-    send_message(s, 1, &Vec::new()).unwrap();
+    send_message(s, TYPE_UNCHOKED, &Vec::new()).unwrap();
 }
 
 pub fn send_block(download: &mut Download, request: &IncomingBlockRequest) {
@@ -218,7 +227,7 @@ pub fn send_block(download: &mut Download, request: &IncomingBlockRequest) {
     payload.extend(io_primitives::u32_to_bytes(request.begin as u32));
     payload.extend(data);
 
-    send_message(s, 7, &payload).unwrap();
+    send_message(s, TYPE_PIECE, &payload).unwrap();
     download.stats_mut().add_uploaded(blocklen as u32);
 }
 
@@ -320,8 +329,7 @@ fn on_piece(message: Vec<u8>, download: &mut Download, peer_id: usize) {
     let pieceindex = io_primitives::bytes_to_u32(&message[1..=4]);
     let begin = io_primitives::bytes_to_u32(&message[5..=8]) as usize;
     let blocklen = (message.len() - 9) as usize;
-    let block_size = 16384;
-    let block_id = begin / block_size;
+    let block_id = begin / config::BLOCK_SIZE as usize;
     info!(
         "Got piece {} from peer_id={}; from {}, len={}, writing to {}",
         pieceindex, peer_id, begin, blocklen, path
@@ -331,9 +339,9 @@ fn on_piece(message: Vec<u8>, download: &mut Download, peer_id: usize) {
 
     let seek_pos: u64 =
         ((pieceindex as i64) * (download.piece_length as i64) + (begin as i64)) as u64;
-    info!("Seeking position: {}", seek_pos);
+    trace!("Seeking position: {}", seek_pos);
     file.seek(SeekFrom::Start(seek_pos)).unwrap();
-    info!("Writing to file");
+    trace!("Writing to file");
     file.write(&message[9..]).unwrap();
 
     download.peer_mut(peer_id).outstanding_block_requests -= 1;
