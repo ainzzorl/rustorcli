@@ -11,23 +11,26 @@ build-release :
 install : build-release
 			 sudo cp target/release/rustorcli /usr/local/bin/
 
-test :
-			 RUST_BACKTRACE=1 RUST_LOG=rustorcli=trace cargo test -- --test-threads=1
-
 e2e-incoming :
-			 RUST_BACKTRACE=1 RUST_LOG=rustorcli=trace cargo test e2e_incoming_with_webtorrent -- --nocapture --ignored
+			 RUST_BACKTRACE=1 RUST_LOG=rustorcli=trace cargo test e2e_incoming_with_webtorrent -- --nocapture
 			 cargo run stop
 
 e2e-outgoing-with-transmission :
-			 RUST_BACKTRACE=1 RUST_LOG=rustorcli=trace cargo test e2e_outgoing_with_transmission -- --nocapture --ignored
+			 RUST_BACKTRACE=1 RUST_LOG=rustorcli=trace cargo test e2e_outgoing_with_transmission -- --nocapture
 			 cargo run stop
 
 e2e-outgoing-three-way :
-			 RUST_BACKTRACE=1 RUST_LOG=rustorcli=trace cargo test e2e_outgoing_three_way -- --nocapture --ignored
+			 RUST_BACKTRACE=1 RUST_LOG=rustorcli=trace cargo test e2e_outgoing_three_way -- --nocapture
 			 cargo run stop
 
-e2e :
-	RUST_BACKTRACE=1 RUST_LOG=rustorcli=trace cargo test e2e_tests -- --test-threads=1 --nocapture --ignored
+test-e2e :
+			 RUST_BACKTRACE=1 RUST_LOG=rustorcli=trace cargo test e2e_tests -- --test-threads=1 --nocapture
+
+test-cli :
+			 RUST_BACKTRACE=1 RUST_LOG=rustorcli=trace cargo test cli_tests -- --test-threads=1 --nocapture
+
+test:
+			 RUST_BACKTRACE=1 RUST_LOG=rustorcli=trace cargo test -- --test-threads=1 --nocapture
 
 cleanup:
 			 cargo run stop
@@ -37,8 +40,6 @@ cleanup:
 			 lsof -i:8000 | awk 'NR!=1 {print $$2}' | xargs kill -9
 			 rm -rf target/tmp/
 			 rm -rf $(CONFIG_PATH)
-
-test-all: test e2e cleanup
 
 run-current:
 			 mkdir -p target/tmp/current

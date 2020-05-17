@@ -29,10 +29,7 @@ mod e2e_tests {
     static ATTEMPTS: u32 = 100;
     static BETWEEN_ATTEMPTS: Duration = time::Duration::from_secs(1);
 
-    // TODO: don't ignore, somehow
-
     #[test]
-    #[ignore]
     fn e2e_outgoing_with_transmission() -> Result<(), Box<dyn std::error::Error>> {
         e2e_from_definition(E2ETestDefinition {
             description: String::from(
@@ -68,7 +65,6 @@ mod e2e_tests {
     }
 
     #[test]
-    #[ignore]
     fn e2e_outgoing_three_way() -> Result<(), Box<dyn std::error::Error>> {
         e2e_from_definition(E2ETestDefinition {
         description: String::from(
@@ -122,7 +118,6 @@ mod e2e_tests {
     }
 
     #[test]
-    #[ignore]
     fn e2e_incoming_with_webtorrent() -> Result<(), Box<dyn std::error::Error>> {
         e2e_from_definition(E2ETestDefinition {
             description: String::from(
