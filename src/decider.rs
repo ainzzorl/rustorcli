@@ -1,16 +1,9 @@
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 use log::*;
 
 use crate::config;
 use crate::download::{BlockRequestRecord, Download, IncomingBlockRequest};
-
-static REQUEST_EXPIRATION: Duration = Duration::from_secs(30);
-static MAX_OUTSTANDING_REQUESTS_PER_PEER: i32 = 10;
-static MAX_REQUESTS_PER_TICK: usize = 10;
-
-static MAX_RECONNECT_ATTEMPTS: u32 = 32;
-static MIN_RECONNECT_INTERVAL: Duration = Duration::from_secs(5);
 
 pub struct BlockRequest {
     pub download_id: u32,
@@ -56,7 +49,7 @@ pub fn decide_block_requests(download: &mut Download) -> Vec<BlockRequest> {
         }
         let mut block_id: i32 = -1;
         for block in piece.blocks() {
-            if result.len() >= MAX_REQUESTS_PER_TICK {
+            if result.len() >= config::MAX_REQUESTS_PER_TICK_PER_DOWNLOAD {
                 break;
             }
             block_id += 1;
@@ -132,7 +125,7 @@ pub fn decide_peers_to_reconnect(download: &Download) -> Vec<usize> {
             );
             continue;
         }
-        if peer.reconnect_attempts >= MAX_RECONNECT_ATTEMPTS {
+        if peer.reconnect_attempts >= config::MAX_PEER_RECONNECT_ATTEMPTS {
             trace!(
                 "Not requesting reconnection - too many attempts. download_id={}, peer_id={}",
                 download.id,
@@ -140,7 +133,7 @@ pub fn decide_peers_to_reconnect(download: &Download) -> Vec<usize> {
             );
             continue;
         }
-        if peer.last_reconnect_attempt.elapsed().unwrap() < MIN_RECONNECT_INTERVAL {
+        if peer.last_reconnect_attempt.elapsed().unwrap() < config::MIN_PEER_RECONNECT_INTERVAL {
             trace!(
                 "Not requesting reconnection - too soon. download_id={}, peer_id={}",
                 download.id,
@@ -148,10 +141,9 @@ pub fn decide_peers_to_reconnect(download: &Download) -> Vec<usize> {
             );
             continue;
         }
-        trace!(
+        debug!(
             "Going to request reconnection!. download_id={}, peer_id={}",
-            download.id,
-            peer_id
+            download.id, peer_id
         );
         result.push(peer_id);
     }
@@ -177,35 +169,24 @@ pub fn decide_have_broadcasts(download: &mut Download) -> Vec<HaveBroadcast> {
 }
 
 fn find_peer(download: &Download, piece_id: usize, added_in_this: &Vec<i32>) -> Option<usize> {
-    // let mut no_connection = 0;
-    // let mut choked = 0;
-    // let mut too_many_outstanding_requests = 0;
     for peer_index in 0..download.peers().len() {
         let peer = download.peer(peer_index);
-        // TODO: check if has piece!
         if peer.stream.is_none() {
-            //no_connection += 1;
             continue;
         }
         if peer.we_choked {
-            //choked += 1;
             continue;
         }
         if !peer.has_piece[piece_id] {
             continue;
         }
         if peer.outstanding_block_requests + added_in_this[peer_index]
-            >= MAX_OUTSTANDING_REQUESTS_PER_PEER
+            >= config::MAX_OUTSTANDING_REQUESTS_PER_PEER
         {
-            //too_many_outstanding_requests += 1;
             continue;
         }
         return Some(peer_index);
     }
-    // info!(
-    //     "Did not find appropriate peer. No connection: {}, choked: {}, too-many-outstanding: {}",
-    //     no_connection, choked, too_many_outstanding_requests
-    // );
     None
 }
 
@@ -216,5 +197,5 @@ fn request_is_active(record: &Option<BlockRequestRecord>, now: SystemTime) -> bo
     let request_time = record.as_ref().unwrap().time;
     let diff = now.duration_since(request_time).unwrap();
 
-    return diff <= REQUEST_EXPIRATION;
+    return diff <= config::REQUEST_EXPIRATION;
 }
