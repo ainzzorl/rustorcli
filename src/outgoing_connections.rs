@@ -3,9 +3,9 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::net::TcpStream;
 use std::sync::mpsc::{Receiver, Sender};
-use std::time::Duration;
 use std::{thread, time};
 
+use crate::config;
 use crate::handshake::handshake_outgoing;
 
 pub struct OpenConnectionRequest {
@@ -63,7 +63,7 @@ pub fn open_missing_connections(
     inx: Receiver<OpenConnectionRequest>,
     outx: Sender<OpenConnectionResponse>,
 ) {
-    info!("In open_missing_connections");
+    trace!("In open_missing_connections");
 
     loop {
         let request_opt = inx.recv();
@@ -84,7 +84,7 @@ pub fn open_missing_connections(
         info!("Trying to open missing connection; address={}", address);
         let socket_address: SocketAddr = address.parse().expect("Unable to parse socket address");
 
-        match TcpStream::connect_timeout(&socket_address, Duration::from_secs(1)) {
+        match TcpStream::connect_timeout(&socket_address, config::OUTGOING_CONNECTION_TIMEOUT) {
             Ok(mut stream) => {
                 info!("Connected to the peer!");
                 match handshake_outgoing(&mut stream, &request.info_hash, &request.my_id) {
@@ -98,7 +98,7 @@ pub fn open_missing_connections(
                         .unwrap();
                     }
                     Err(e) => {
-                        info!("Handshake failure: {:?}", e);
+                        warn!("Handshake failure: {:?}", e);
                         outx.send(Err(ConnectionError {
                             peer_id: request.peer_id,
                             download_id: request.download_id as u32,
