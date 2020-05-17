@@ -8,3 +8,5 @@ pub const MAX_REQUESTS_PER_TICK_PER_DOWNLOAD: usize = 10;
 
 pub const MAX_PEER_RECONNECT_ATTEMPTS: u32 = 32;
 pub const MIN_PEER_RECONNECT_INTERVAL: Duration = Duration::from_secs(5);
+
+pub const BLOCK_SIZE: u32 = 16384;

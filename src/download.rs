@@ -32,6 +32,7 @@ use serde_bencode::value::Value;
 use log::*;
 
 use crate::announcement::PeerInfo;
+use crate::config;
 use crate::torrent_entries;
 
 pub struct Download {
@@ -263,7 +264,7 @@ impl Download {
         for peer in self.peers.iter() {
             if let Some(info) = &peer.peer_info {
                 if info.ip == peer_info.ip && info.port == peer_info.port {
-                    info!(
+                    debug!(
                         "Skipping peer - already registered. download_id={}, ip={}, port={}",
                         self.id, peer_info.ip, peer_info.port
                     );
@@ -327,7 +328,9 @@ impl Download {
 
     pub fn set_block_downloaded(&mut self, piece_id: usize, block_id: usize) {
         self.pieces[piece_id].set_block_downloaded(block_id);
-        self.check_if_piece_done(piece_id);
+        if self.pieces[piece_id].downloaded() {
+            self.on_piece_done(piece_id);
+        }
         if self.get_is_downloaded() {
             self.downloaded = true;
             self.on_done();
@@ -340,29 +343,17 @@ impl Download {
 
     fn init_pieces(torrent_serializable: &TorrentSerializable, file: &mut File) -> Vec<Piece> {
         let piece_infos = parse_pieces(&torrent_serializable);
-
-        info!("In init_pieces");
         let num_pieces = piece_infos.len();
 
         let mut pieces = Vec::new();
 
         for piece_id in 0..piece_infos.len() {
-            let block_size = 16384;
             let mut piece_length = torrent_serializable.info.piece_length;
 
             if piece_id == num_pieces - 1 {
                 let standard_piece_length = piece_length;
                 let in_previous = standard_piece_length * ((num_pieces - 1) as i64);
                 let remaining = torrent_serializable.info.length - in_previous;
-                info!(
-                    "Remaining in last piece = {} = {} - {} = {} - {} * {}",
-                    remaining,
-                    torrent_serializable.info.length,
-                    in_previous,
-                    torrent_serializable.info.length,
-                    standard_piece_length,
-                    num_pieces - 1
-                );
                 piece_length = remaining;
             }
 
@@ -374,7 +365,6 @@ impl Download {
                 .read_to_end(&mut data)
                 .unwrap();
 
-            // TODO: don't do this every time, store per piece!
             let pieces_shas: Vec<Sha1> = torrent_serializable
                 .info
                 .pieces
@@ -386,17 +376,16 @@ impl Download {
             let actual_hash = calculate_sha1(&data);
 
             let have_this_piece = expected_hash == actual_hash;
-            info!("Have piece_id={}? {}", piece_id, have_this_piece);
 
-            let num_blocks = ((piece_length as f64) / (block_size as f64)).ceil() as usize;
+            let num_blocks = ((piece_length as f64) / (config::BLOCK_SIZE as f64)).ceil() as usize;
 
             let mut blocks = Vec::new();
 
             for block_id in 0..num_blocks {
-                let block_offset = (block_id * block_size) as u64;
+                let block_offset = (block_id as u32 * config::BLOCK_SIZE) as u64;
                 let block_len = min(
                     torrent_serializable.info.length - (piece_offset as i64) - block_offset as i64,
-                    block_size as i64,
+                    config::BLOCK_SIZE as i64,
                 );
                 blocks.push(Block {
                     downloaded: have_this_piece,
@@ -418,12 +407,8 @@ impl Download {
         return pieces;
     }
 
-    pub fn check_if_piece_done(&mut self, piece_id: usize) {
+    pub fn on_piece_done(&mut self, piece_id: usize) {
         let piece = &self.pieces()[piece_id];
-        if !piece.downloaded() {
-            return;
-        }
-        info!("Piece {} seems to be downloaded...", piece_id);
 
         let mut file = &self.file;
 
@@ -471,7 +456,7 @@ impl Download {
     }
 
     fn get_is_downloaded(&self) -> bool {
-        info!("Checking if the download is done...");
+        debug!("Checking if the download is done...");
         let mut num_blocks = 0;
         let mut downloaded_blocks = 0;
         let mut missing: String = String::from("");
@@ -494,7 +479,7 @@ impl Download {
             }
         }
         if num_blocks != downloaded_blocks {
-            info!(
+            debug!(
                 "Not yet done: downloaded {}/{} blocks. E.g. missing: {}",
                 downloaded_blocks, num_blocks, missing
             );
