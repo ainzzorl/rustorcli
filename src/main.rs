@@ -116,12 +116,12 @@ fn start(pid_opt: Option<i32>, is_local: bool) {
                     process::exit(1);
                 }
                 None => {
-                    println!("Process not found");
+                    // Process not found
                 }
             }
         }
         None => {
-            println!("Pid not present");
+            // Pid not present
         }
     }
     let stdout = File::create("/tmp/rustorcli.out").unwrap();
@@ -156,7 +156,6 @@ fn run(is_local: bool) {
 fn stop(pid_opt: Option<i32>) {
     match pid_opt {
         Some(pid) => {
-            println!("Pid is present");
             let sys = sysinfo::System::new_all();
             let process = sys.get_process(pid);
             match process {
@@ -172,7 +171,7 @@ fn stop(pid_opt: Option<i32>) {
             }
         }
         None => {
-            println!("No pid - do nothing");
+            // No pid - do nothing
         }
     }
 }
