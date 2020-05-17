@@ -40,11 +40,10 @@ fn reload_config(
         if !downloads.contains_key(&entry.id) {
             info!("Adding entry, id={}", entry.id);
 
-            let mut download = to_download(&entry);
+            let mut download = Download::new(&entry);
 
             match persistent_states.get(&download.id) {
                 Some(state) => {
-                    // TODO: check info hash
                     download.set_stats(Stats {
                         downloaded: state.downloaded,
                         uploaded: state.uploaded,
@@ -60,12 +59,7 @@ fn reload_config(
     // TODO: remove removed downloads
 }
 
-fn to_download(entry: &torrent_entries::TorrentEntry) -> Download {
-    Download::new(entry)
-}
-
 pub fn start(is_local: bool) {
-    info!("Starting orchestration");
     // TODO: consistent id
     // TODO: encode client name
     let my_id: String = thread_rng().sample_iter(&Alphanumeric).take(20).collect();
@@ -80,7 +74,7 @@ fn receive_incoming_connections(
     my_id: &String,
     downloads: &mut HashMap<u32, Download>,
 ) {
-    info!("Receiving incoming connections");
+    debug!("Receiving incoming connections");
 
     match tcp_listener.accept() {
         Ok((s, _addr)) => handle_incoming_connection(s, my_id, downloads),
@@ -99,7 +93,7 @@ fn handle_incoming_connection(
     info!("Incoming connection!");
     match handshake_incoming(&mut s, my_id) {
         Ok(info_hash) => {
-            info!("Successful incoming handshake!!!");
+            info!("Successful incoming handshake");
 
             let mut found = false;
             for (download_id, download) in downloads {
@@ -113,7 +107,7 @@ fn handle_incoming_connection(
                     peer_protocol::send_bitfield(peer_index, download);
                     thread::sleep(time::Duration::from_secs(1));
                     peer_protocol::send_unchoke(peer_index, download);
-                    info!("Done adding the connection to download");
+                    debug!("Done adding the connection to download");
                     break;
                 }
             }
@@ -123,7 +117,7 @@ fn handle_incoming_connection(
             }
         }
         Err(e) => {
-            info!("Handshake failure: {:?}", e);
+            warn!("Handshake failure: {:?}", e);
         }
     }
 }
@@ -355,15 +349,23 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: b
         );
     });
 
+    let mut last_loop_log = std::time::SystemTime::UNIX_EPOCH;
+    let loop_log_interval = std::time::Duration::from_secs(3);
+
     loop {
-        info!("Main loop iteration #{}", iteration);
+        if last_loop_log.elapsed().unwrap() > loop_log_interval {
+            info!("Main loop iteration #{}", iteration);
+            last_loop_log = std::time::SystemTime::now();
+        } else {
+            trace!("Main loop iteration #{}", iteration);
+        }
 
         if iteration % 100 == 0 {
             info!("Reloading config on iteration {}", iteration);
             reload_config(downloads, &initial_persistent_state);
         }
 
-        if last_state_persistence.elapsed().unwrap() > std::time::Duration::from_secs(3) {
+        if last_state_persistence.elapsed().unwrap() > config::STATE_PERISTENCE_INTERVAL {
             state_persistence::persist(downloads, &persistent_state_location);
             last_state_persistence = std::time::SystemTime::now();
         }
@@ -395,7 +397,7 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: b
             &mut open_connections_request_sender,
         );
 
-        thread::sleep(time::Duration::from_millis(100));
+        thread::sleep(config::TICK_INTERVAL);
         iteration += 1;
     }
 }
@@ -419,11 +421,15 @@ fn execute_outgoing_block_requests(downloads: &mut HashMap<u32, Download>) {
     for d in downloads.values_mut() {
         let mut download: &mut Download = d;
         let requests = decide_block_requests(download);
-        info!(
-            "Executing outgoing {} requests for download_id={}",
-            requests.len(),
-            download.id
-        );
+        if requests.is_empty() {
+            trace!("No outgoing block requests");
+        } else {
+            info!(
+                "Executing outgoing {} request(s) for download_id={}",
+                requests.len(),
+                download.id
+            );
+        }
 
         let mut to_reset = Vec::new();
         for request in requests {
@@ -474,11 +480,18 @@ fn execute_incoming_block_requests(downloads: &mut HashMap<u32, Download>) {
     for d in downloads.values_mut() {
         let download: &mut Download = d;
         let requests = decide_incoming_block_requests(download);
-        info!(
-            "Executing incoming {} requests for download_id={}",
-            requests.len(),
-            download.id
-        );
+        if requests.is_empty() {
+            trace!(
+                "No incoming block request(s) for download_id={}",
+                download.id
+            );
+        } else {
+            info!(
+                "Executing incoming {} request(s) for download_id={}",
+                requests.len(),
+                download.id
+            );
+        }
 
         for request in requests {
             peer_protocol::send_block(download, &request);
@@ -487,7 +500,7 @@ fn execute_incoming_block_requests(downloads: &mut HashMap<u32, Download>) {
 }
 
 fn receive_messages(downloads: &mut HashMap<u32, Download>) {
-    info!("Receiving messages connections");
+    debug!("Receiving messages connections");
     for (download_id, download) in downloads {
         struct Msg {
             message: Vec<u8>,
@@ -501,8 +514,7 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
             if peer.stream.is_none() {
                 continue;
             }
-            //let stream: &mut TcpStream = peer.stream.as_mut().unwrap();
-            for _ in 0..100 {
+            for _ in 0..config::MAX_INCOMING_MESSAGES_PER_TICK_PER_DOWNLOAD {
                 // Guard against too many incoming messages
                 match peer_protocol::receive_message(&mut peer, *download_id as usize, peer_id) {
                     Ok(Some(message)) => {

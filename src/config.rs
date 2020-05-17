@@ -10,3 +10,9 @@ pub const MAX_PEER_RECONNECT_ATTEMPTS: u32 = 32;
 pub const MIN_PEER_RECONNECT_INTERVAL: Duration = Duration::from_secs(5);
 
 pub const BLOCK_SIZE: u32 = 16384;
+
+pub const STATE_PERISTENCE_INTERVAL: Duration = std::time::Duration::from_secs(3);
+
+pub const TICK_INTERVAL: Duration = std::time::Duration::from_millis(100);
+
+pub const MAX_INCOMING_MESSAGES_PER_TICK_PER_DOWNLOAD: u32 = 100;
