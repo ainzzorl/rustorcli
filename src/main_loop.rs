@@ -450,7 +450,7 @@ fn execute_outgoing_block_requests(downloads: &mut HashMap<u32, Download>) {
                 }
                 peer.we_interested = true;
             } else {
-                info!("We are already interested in the peer");
+                debug!("We are already interested in the peer");
             }
 
             if peer_protocol::request_block(
