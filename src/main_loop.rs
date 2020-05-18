@@ -403,8 +403,7 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: b
 }
 
 fn broadcast_have(downloads: &mut HashMap<u32, Download>) {
-    for d in downloads.values_mut() {
-        let mut download: &mut Download = d;
+    for mut download in downloads.values_mut() {
         for have_broadcast in decide_have_broadcasts(&mut download) {
             // TODO: do something about failed connections.
             peer_protocol::send_have(
@@ -418,8 +417,7 @@ fn broadcast_have(downloads: &mut HashMap<u32, Download>) {
 }
 
 fn execute_outgoing_block_requests(downloads: &mut HashMap<u32, Download>) {
-    for d in downloads.values_mut() {
-        let mut download: &mut Download = d;
+    for mut download in downloads.values_mut() {
         let requests = decide_block_requests(download);
         if requests.is_empty() {
             trace!("No outgoing block requests");
@@ -477,8 +475,7 @@ fn execute_outgoing_block_requests(downloads: &mut HashMap<u32, Download>) {
 }
 
 fn execute_incoming_block_requests(downloads: &mut HashMap<u32, Download>) {
-    for d in downloads.values_mut() {
-        let download: &mut Download = d;
+    for download in downloads.values_mut() {
         let requests = decide_incoming_block_requests(download);
         if requests.is_empty() {
             trace!(
