@@ -25,6 +25,8 @@ mod e2e_tests {
 
     use std::io;
 
+    use rayon::prelude::*;
+
     static TEMP_DIRECTORY: &str = "./target/tmp/e2e";
     static ATTEMPTS: u32 = 100;
     static BETWEEN_ATTEMPTS: Duration = time::Duration::from_secs(1);
@@ -158,9 +160,7 @@ mod e2e_tests {
             }
         }
 
-        for client in definition.clients.iter() {
-            client.client_type.stop_and_cleanup();
-        }
+        stop_clients(&definition.clients);
 
         for (i, client) in definition.clients.iter().enumerate() {
             client.start();
@@ -213,6 +213,12 @@ mod e2e_tests {
         }
 
         panic!("Never reached the desired state");
+    }
+
+    fn stop_clients(clients: &Vec<Client>) {
+        clients.par_iter().for_each(|client| {
+            client.client_type.stop_and_cleanup();
+        });
     }
 
     fn restart_tracker() {
