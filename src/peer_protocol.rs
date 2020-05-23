@@ -204,9 +204,9 @@ pub fn send_block(
     download: &mut Download,
     request: &IncomingBlockRequest,
 ) -> Result<(), std::io::Error> {
-    let offset: u32 = ((request.piece_id as i64) * (download.piece_length as i64)
-        + (request.begin as i64)) as u32;
-    let data = download.get_content(offset, request.length as u32);
+    let offset: u64 = ((request.piece_id as u64) * (download.piece_length as u64)
+        + (request.begin as u64)) as u64;
+    let data = download.get_content(offset, request.length);
     let blocklen = data.len();
 
     let peer: &mut Peer = download.peer_mut(request.peer_id);
@@ -221,7 +221,7 @@ pub fn send_block(
     payload.extend(data);
 
     send_message(s, TYPE_PIECE, &payload)?;
-    download.stats_mut().add_uploaded(blocklen as u32);
+    download.stats_mut().add_uploaded(blocklen as u64);
     return Ok(());
 }
 
@@ -302,8 +302,8 @@ pub fn receive_message(
 
 fn to_incoming_block_request(peer_id: usize, message: Vec<u8>) -> IncomingBlockRequest {
     let pieceindex = io_primitives::bytes_to_u32(&message[1..=4]);
-    let begin = io_primitives::bytes_to_u32(&message[5..=8]) as usize;
-    let length = io_primitives::bytes_to_u32(&message[9..=12]) as usize;
+    let begin = io_primitives::bytes_to_u32(&message[5..=8]) as u64;
+    let length = io_primitives::bytes_to_u32(&message[9..=12]) as u64;
     info!(
         "Got request {} from peer_id={}; from {}, len={}",
         pieceindex, peer_id, begin, length
@@ -331,11 +331,11 @@ fn on_piece(message: Vec<u8>, download: &mut Download, peer_id: usize) {
 
     let seek_pos: u64 =
         ((pieceindex as i64) * (download.piece_length as i64) + (begin as i64)) as u64;
-    download.set_content(seek_pos as u32, &message[9..]);
+    download.set_content(seek_pos, &message[9..]);
 
     download.peer_mut(peer_id).outstanding_block_requests -= 1;
     download.set_block_downloaded(pieceindex as usize, block_id);
-    download.stats_mut().add_downloaded(blocklen as u32);
+    download.stats_mut().add_downloaded(blocklen as u64);
 }
 
 fn send_message(

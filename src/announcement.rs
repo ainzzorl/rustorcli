@@ -40,8 +40,8 @@ pub struct GetAnnouncementRequest {
     pub info_hash: Vec<u8>,
     pub is_local: bool,
     pub download_id: u32,
-    pub downloaded: u32,
-    pub uploaded: u32,
+    pub downloaded: u64,
+    pub uploaded: u64,
 }
 
 pub struct GetAnnouncementResponse {

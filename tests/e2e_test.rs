@@ -68,7 +68,6 @@ mod e2e_tests {
     }
 
     #[test]
-    #[ignore] // TODO: no [ignored]
     fn e2e_outgoing_with_transmission_directories() -> Result<(), Box<dyn std::error::Error>> {
         e2e_from_definition(E2ETestDefinition {
             description: String::from(
@@ -291,11 +290,26 @@ mod e2e_tests {
     }
 
     fn get_hash(path: &str) -> String {
-        let mut file = File::open(path).unwrap();
-        let mut sha256 = Sha256::new();
-        io::copy(&mut file, &mut sha256).unwrap();
-        let hash = sha256.result();
-        return format!("{:x}", hash);
+        if std::fs::metadata(path).unwrap().is_file() {
+            let mut file = File::open(path).unwrap();
+            let mut sha256 = Sha256::new();
+            io::copy(&mut file, &mut sha256).unwrap();
+            let hash = sha256.result();
+            return format!("{:x}", hash);
+        } else {
+            let mut sha256 = Sha256::new();
+            let file_paths = std::fs::read_dir(path).unwrap();
+            for entry in file_paths {
+                let fu = entry.unwrap().path();
+                let file_path = format!("{}", fu.display());
+                if std::fs::metadata(&file_path).unwrap().is_file() {
+                    let mut file = File::open(file_path).unwrap();
+                    io::copy(&mut file, &mut sha256).unwrap();
+                }
+            }
+            let hash = sha256.result();
+            return format!("{:x}", hash);
+        }
     }
 
     fn stop_and_clean_transmission() -> Result<(), Box<dyn std::error::Error>> {

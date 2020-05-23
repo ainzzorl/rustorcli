@@ -11,9 +11,9 @@ use crate::download::Download;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PersistentDownloadState {
-    pub uploaded: u32,
-    pub downloaded: u32,
-    pub total_size: i64,
+    pub uploaded: u64,
+    pub downloaded: u64,
+    pub total_size: u64,
     pub incoming_peers: u32,
     pub outgoing_peers: u32,
     pub connected_peers: u32,

@@ -49,8 +49,8 @@ pub struct Download {
 
     peers: Vec<Peer>,
 
-    pub piece_length: i64,
-    pub length: i64,
+    pub piece_length: u64,
+    pub length: u64,
     pieces: Vec<Piece>,
 
     pub info_hash: Vec<u8>,
@@ -72,21 +72,21 @@ pub struct Download {
 pub struct DownloadFile {
     pub path: String,
     pub handle: File,
-    pub length: i64,
+    pub length: u64,
 }
 
 pub struct Piece {
     downloaded: bool,
     pub sha: Vec<u8>,
     blocks: Vec<Block>,
-    offset: u32,
-    len: u32,
+    offset: u64,
+    len: u64,
 }
 
 pub struct Block {
     downloaded: bool,
     offset: u64,
-    len: u32,
+    len: u64,
 
     request_record: Option<BlockRequestRecord>,
 }
@@ -98,8 +98,8 @@ pub struct BlockRequestRecord {
 
 pub struct IncomingBlockRequest {
     pub peer_id: usize,
-    pub begin: usize,
-    pub length: usize,
+    pub begin: u64,
+    pub length: u64,
     pub piece_id: usize,
 }
 
@@ -115,9 +115,9 @@ struct TorrentSerializable {
 struct TorrentInfoSerializable {
     name: String,
     #[serde(default)]
-    length: i64,
+    length: u64,
     #[serde(rename = "piece length")]
-    piece_length: i64,
+    piece_length: u64,
     pieces: ByteBuf,
     #[serde(default)]
     files: Vec<FileSerializable>,
@@ -131,7 +131,7 @@ pub struct PieceInfo {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 struct FileSerializable {
-    pub length: i64,
+    pub length: u64,
     pub path: Vec<String>,
 }
 
@@ -181,8 +181,8 @@ impl Peer {
 }
 
 pub struct Stats {
-    pub downloaded: u32,
-    pub uploaded: u32,
+    pub downloaded: u64,
+    pub uploaded: u64,
 }
 
 impl Stats {
@@ -193,20 +193,20 @@ impl Stats {
         }
     }
 
-    pub fn downloaded(&self) -> u32 {
+    pub fn downloaded(&self) -> u64 {
         self.downloaded
     }
 
-    pub fn uploaded(&self) -> u32 {
+    pub fn uploaded(&self) -> u64 {
         self.uploaded
     }
 
-    pub fn add_downloaded(&mut self, delta: u32) {
+    pub fn add_downloaded(&mut self, delta: u64) {
         self.downloaded += delta;
         debug!("Total downloaded: {}", self.downloaded);
     }
 
-    pub fn add_uploaded(&mut self, delta: u32) {
+    pub fn add_uploaded(&mut self, delta: u64) {
         self.uploaded += delta;
         debug!("Total uploaded: {}", self.uploaded);
     }
@@ -254,10 +254,22 @@ impl Download {
             }
             for file_info in torrent_serializable.info.files {
                 let path_from_download_root = format!("/{}", file_info.path.join("/"));
+                let file_dir = format!(
+                    "{}/{}",
+                    location,
+                    file_info.path[0..file_info.path.len() - 1].join("/")
+                );
                 let actual_path = format!("{}{}", location, path_from_download_root);
                 let read = true;
                 let write = location == &temp_location;
                 let create = !Path::new(&actual_path).exists();
+
+                if !Path::new(&file_dir).exists() {
+                    trace!("Creating directory: {}", file_dir);
+                    fs::create_dir_all(&file_dir).unwrap();
+                }
+
+                debug!("Creating file at {}", actual_path);
                 let handle = fs::OpenOptions::new()
                     .create(create)
                     .read(read)
@@ -267,10 +279,15 @@ impl Download {
                     .unwrap();
                 files.push(DownloadFile {
                     path: String::from(path_from_download_root),
-                    length: torrent_serializable.info.length,
+                    length: file_info.length,
                     handle: handle,
                 });
             }
+        }
+
+        let mut total_length: u64 = 0;
+        for file in files.iter() {
+            total_length += file.length;
         }
 
         let mut download = Download {
@@ -282,7 +299,7 @@ impl Download {
             files: files,
             peers: Vec::new(),
             piece_length: torrent_serializable.info.piece_length,
-            length: torrent_serializable.info.length,
+            length: total_length,
             pieces: Vec::new(),
             info_hash: torrent_serializable.info_hash,
             pending_block_requests: VecDeque::new(),
@@ -390,13 +407,13 @@ impl Download {
 
             if piece_id == num_pieces - 1 {
                 let standard_piece_length = piece_length;
-                let in_previous = standard_piece_length * ((num_pieces - 1) as i64);
-                let remaining = torrent_serializable.info.length - in_previous;
+                let in_previous = standard_piece_length * ((num_pieces - 1) as u64);
+                let remaining = self.length - in_previous;
                 piece_length = remaining;
             }
 
-            let piece_offset = ((piece_id as i64) * &torrent_serializable.info.piece_length) as u64;
-            let data = self.get_content(piece_offset as u32, piece_length as u32);
+            let piece_offset = ((piece_id as u64) * &torrent_serializable.info.piece_length) as u64;
+            let data = self.get_content(piece_offset as u64, piece_length);
 
             let pieces_shas: Vec<Sha1> = torrent_serializable
                 .info
@@ -415,15 +432,15 @@ impl Download {
             let mut blocks = Vec::new();
 
             for block_id in 0..num_blocks {
-                let block_offset = (block_id as u32 * config::BLOCK_SIZE) as u64;
+                let block_offset = (block_id as u64 * config::BLOCK_SIZE) as u64;
                 let block_len = min(
-                    torrent_serializable.info.length - (piece_offset as i64) - block_offset as i64,
-                    config::BLOCK_SIZE as i64,
+                    self.length - (piece_offset as u64) - block_offset as u64,
+                    config::BLOCK_SIZE,
                 );
                 blocks.push(Block {
                     downloaded: have_this_piece,
                     offset: block_offset,
-                    len: block_len as u32,
+                    len: block_len,
                     request_record: None,
                 })
             }
@@ -432,39 +449,106 @@ impl Download {
                 downloaded: have_this_piece,
                 sha: expected_hash,
                 blocks: blocks,
-                offset: piece_offset as u32,
-                len: piece_length as u32,
+                offset: piece_offset,
+                len: piece_length,
             });
         }
         self.pieces = pieces;
     }
 
-    // TODO: what if many files?
-    pub fn get_content(&self, offset: u32, len: u32) -> Vec<u8> {
-        let mut handle = &self.files[0].handle;
+    pub fn get_content(&mut self, offset: u64, len: u64) -> Vec<u8> {
+        trace!("Reading content. offset={}, len={}", offset, len);
+        let mut result = vec![];
 
-        handle
-            .seek(std::io::SeekFrom::Start(offset.into()))
-            .unwrap();
-        let mut data = vec![];
-        handle.take(len as u64).read_to_end(&mut data).unwrap();
-        data
+        let mut file_start: u64 = 0;
+        for file in self.files.iter_mut() {
+            let next_file_start = file_start + file.length;
+            if next_file_start <= offset {
+                file_start = next_file_start;
+                continue;
+            }
+
+            // Need to read from this file!
+            let remaining_to_read = len - result.len() as u64;
+            let file_offset = if file_start <= offset {
+                offset - file_start
+            } else {
+                0
+            };
+            let left_in_file = file.length as u64 - file_offset;
+            let read_from_this_file = std::cmp::min(left_in_file, remaining_to_read);
+
+            let handle: &mut File = &mut file.handle;
+
+            handle.seek(std::io::SeekFrom::Start(file_offset)).unwrap();
+            let mut data = vec![];
+            handle
+                .take(read_from_this_file)
+                .read_to_end(&mut data)
+                .unwrap();
+            // To deal with empty and partial files.
+            while data.len() < read_from_this_file as usize {
+                data.push(0);
+            }
+            result.extend(data);
+            if result.len() as u64 >= len {
+                return result;
+            }
+            file_start = next_file_start;
+        }
+        panic!(
+            "Reached the end of the file but never found the content! offset={}, len={}",
+            offset, len
+        );
     }
 
-    // TODO: what if many files?
-    pub fn set_content(&self, offset: u32, data: &[u8]) {
-        let mut handle = &self.files[0].handle;
+    pub fn set_content(&mut self, offset: u64, data: &[u8]) {
+        trace!("Writing content, offset={}, len={}", offset, data.len());
+        let mut remaining_data = data;
 
-        trace!("Seeking position: {}", offset);
-        handle.seek(SeekFrom::Start(offset as u64)).unwrap();
-        trace!("Writing to file");
-        handle.write(data).unwrap();
+        let mut file_start: u64 = 0;
+        for file in self.files.iter_mut() {
+            let next_file_start = file_start + file.length;
+            if next_file_start <= offset {
+                file_start = next_file_start;
+                continue;
+            }
+
+            // Need to write to this file!
+            let remaining_to_write = remaining_data.len() as u64;
+            let file_offset = if file_start <= offset {
+                offset - file_start
+            } else {
+                0
+            };
+            let left_in_file = file.length as u64 - file_offset;
+            let write_to_this_file = std::cmp::min(left_in_file, remaining_to_write);
+
+            let handle: &mut File = &mut file.handle;
+
+            handle.seek(SeekFrom::Start(file_offset)).unwrap();
+            let data_to_write = &remaining_data[..write_to_this_file as usize];
+            handle.write(data_to_write).unwrap();
+            remaining_data = &remaining_data[write_to_this_file as usize..];
+
+            if remaining_data.is_empty() {
+                return;
+            }
+            file_start = next_file_start;
+        }
+        panic!(
+            "Reached the end of the file but never wrote all content! offset={}, remaining data={}",
+            offset,
+            remaining_data.len()
+        );
     }
 
     pub fn on_piece_done(&mut self, piece_id: usize) {
         let piece = &self.pieces()[piece_id];
+        let offset = piece.offset;
+        let len = piece.len;
 
-        let data = self.get_content(piece.offset, piece.len);
+        let data = self.get_content(offset, len);
 
         let expected_hash = self.pieces()[piece_id].sha();
 
@@ -540,7 +624,7 @@ impl Piece {
         self.downloaded
     }
 
-    pub fn len(&self) -> u32 {
+    pub fn len(&self) -> u64 {
         self.len
     }
 
@@ -566,7 +650,7 @@ impl Piece {
         &self.sha
     }
 
-    pub fn offset(&self) -> u32 {
+    pub fn offset(&self) -> u64 {
         self.offset
     }
 }
@@ -584,7 +668,7 @@ impl Block {
         self.offset
     }
 
-    pub fn len(&self) -> u32 {
+    pub fn len(&self) -> u64 {
         self.len
     }
 
