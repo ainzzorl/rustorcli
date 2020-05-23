@@ -7,6 +7,8 @@ mod cli_tests {
 
     use rustorcli::util;
 
+    static TEMP_DIRECTORY: &str = "./target/tmp/";
+
     // TODO: should tests write configs to some other dirs somehow? Then we'd be able to run them in parallel.
 
     #[test]
@@ -20,31 +22,41 @@ mod cli_tests {
 
         cmd = Command::main_binary()?;
         cmd.arg("add")
-            .arg("-t path-to-torrent-1")
-            .arg("-d path-to-destination-1");
+            .arg("-t")
+            .arg("./tests/data/torrent_a_data.torrent")
+            .arg("-d")
+            .arg(format!("{}/destination-a", TEMP_DIRECTORY));
         cmd.assert().success();
 
         cmd = Command::main_binary()?;
         cmd.arg("list");
         cmd.assert()
             .success()
-            .stdout(predicate::str::contains("path-to-torrent-1"))
-            .stdout(predicate::str::contains("path-to-destination-1"));
+            .stdout(predicate::str::contains(
+                "tests/data/torrent_a_data.torrent",
+            ))
+            .stdout(predicate::str::contains("destination-a"));
 
         cmd = Command::main_binary()?;
         cmd.arg("add")
-            .arg("-t path-to-torrent-2")
-            .arg("-d path-to-destination-2");
+            .arg("-t")
+            .arg("tests/data/torrent_b_data.torrent")
+            .arg("-d")
+            .arg(format!("{}/destination-b", TEMP_DIRECTORY));
         cmd.assert().success();
 
         cmd = Command::main_binary()?;
         cmd.arg("list");
         cmd.assert()
             .success()
-            .stdout(predicate::str::contains("path-to-torrent-1"))
-            .stdout(predicate::str::contains("path-to-destination-1"))
-            .stdout(predicate::str::contains("path-to-torrent-2"))
-            .stdout(predicate::str::contains("path-to-destination-2"));
+            .stdout(predicate::str::contains(
+                "tests/data/torrent_a_data.torrent",
+            ))
+            .stdout(predicate::str::contains("destination-a"))
+            .stdout(predicate::str::contains(
+                "tests/data/torrent_b_data.torrent",
+            ))
+            .stdout(predicate::str::contains("destination-b"));
 
         cmd = Command::main_binary()?;
         cmd.arg("remove").arg("-i").arg("2");
@@ -54,10 +66,12 @@ mod cli_tests {
         cmd.arg("list");
         cmd.assert()
             .success()
-            .stdout(predicate::str::contains("path-to-torrent-1"))
-            .stdout(predicate::str::contains("path-to-destination-1"))
-            .stdout(predicate::str::contains("path-to-torrent-2").not())
-            .stdout(predicate::str::contains("path-to-destination-2").not());
+            .stdout(predicate::str::contains(
+                "tests/data/torrent_a_data.torrent",
+            ))
+            .stdout(predicate::str::contains("destination-a"))
+            .stdout(predicate::str::contains("tests/data/torrent_b_data.torrent").not())
+            .stdout(predicate::str::contains("destination-b").not());
 
         cmd = Command::main_binary()?;
         cmd.arg("remove").arg("-i").arg("1");
@@ -77,9 +91,9 @@ mod cli_tests {
         let mut cmd = Command::main_binary()?;
         cmd.arg("add")
             .arg("-t")
-            .arg("path-to-torrent-1")
+            .arg("./tests/data/torrent_a_data.torrent")
             .arg("-d")
-            .arg("path-to-destination-1");
+            .arg(format!("{}/destination-a", TEMP_DIRECTORY));
         cmd.assert().success();
 
         cmd = Command::main_binary()?;
@@ -146,9 +160,9 @@ mod cli_tests {
         let mut cmd = Command::main_binary()?;
         cmd.arg("add")
             .arg("-t")
-            .arg("path-to-torrent")
+            .arg("./tests/data/torrent_a_data.torrent")
             .arg("-d")
-            .arg("path-to-destination")
+            .arg(format!("{}/destination-a", TEMP_DIRECTORY))
             .arg("-f")
             .arg("b");
         cmd.assert().failure().stderr(predicate::str::contains(
@@ -161,5 +175,7 @@ mod cli_tests {
     fn pre_test() {
         let config_directory = util::config_directory();
         std::fs::remove_dir_all(config_directory).unwrap();
+        std::fs::create_dir_all(format!("{}/destination-a", TEMP_DIRECTORY)).ok();
+        std::fs::create_dir_all(format!("{}/destination-b", TEMP_DIRECTORY)).ok();
     }
 }

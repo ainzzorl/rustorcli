@@ -248,12 +248,6 @@ mod e2e_tests {
         }
     }
 
-    fn get_absolute(relative: &str) -> String {
-        let cur = std::env::current_dir().unwrap();
-        let cur_str = cur.to_str().unwrap();
-        return format!("{}/{}", cur_str, relative);
-    }
-
     fn get_hash(path: &str) -> String {
         let mut file = File::open(path).unwrap();
         let mut sha256 = Sha256::new();
@@ -371,9 +365,9 @@ mod e2e_tests {
                             .unwrap()
                             .arg("add")
                             .arg("-t")
-                            .arg(get_absolute(format!("./tests/data/{}", file).as_str()))
+                            .arg(format!("./tests/data/{}", file).as_str())
                             .arg("-d")
-                            .arg(get_absolute(self.directory().as_str()))
+                            .arg(self.directory().as_str())
                             .assert()
                             .success();
                     }

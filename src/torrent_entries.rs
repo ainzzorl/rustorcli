@@ -50,8 +50,8 @@ pub fn add_torrent(torrent_path: &str, download_path: &str) {
 
     let new_entry = TorrentEntry::new(
         new_id,
-        String::from(torrent_path),
-        String::from(download_path),
+        get_absolute(torrent_path),
+        get_absolute(download_path),
     );
     entries.push(new_entry);
 
@@ -95,4 +95,13 @@ fn get_new_id(entries: &Vec<TorrentEntry>) -> u32 {
 fn save(entries: Vec<TorrentEntry>) {
     let result_str = serde_json::to_string(&entries).unwrap();
     fs::write(get_entries_file_path(), &result_str).expect("Unable to write entries file");
+}
+
+fn get_absolute(relative: &str) -> String {
+    Path::new(relative)
+        .canonicalize()
+        .unwrap()
+        .into_os_string()
+        .into_string()
+        .unwrap()
 }
