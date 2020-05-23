@@ -17,6 +17,7 @@ use std::collections::VecDeque;
 use std::io::Read;
 use std::io::Seek;
 use std::io::SeekFrom;
+use std::io::Write;
 
 use std::convert::TryInto;
 use std::os::unix::fs::OpenOptionsExt;
@@ -43,7 +44,8 @@ pub struct Download {
     pub name: String,
 
     pub temp_location: String,
-    pub file: File,
+
+    pub files: Vec<DownloadFile>,
 
     peers: Vec<Peer>,
 
@@ -63,6 +65,14 @@ pub struct Download {
 
     pub last_check_with_tracker: std::time::SystemTime,
     pub tracker_interval: u64,
+
+    pub single_file: bool,
+}
+
+pub struct DownloadFile {
+    pub path: String,
+    pub handle: File,
+    pub length: i64,
 }
 
 pub struct Piece {
@@ -104,16 +114,25 @@ struct TorrentSerializable {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 struct TorrentInfoSerializable {
     name: String,
+    #[serde(default)]
     length: i64,
     #[serde(rename = "piece length")]
     piece_length: i64,
     pieces: ByteBuf,
+    #[serde(default)]
+    files: Vec<FileSerializable>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct PieceInfo {
     pub downloaded: bool,
     pub sha: Vec<u8>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+struct FileSerializable {
+    pub length: i64,
+    pub path: Vec<String>,
 }
 
 pub struct Peer {
@@ -196,46 +215,63 @@ impl Stats {
 impl Download {
     pub fn new(entry: &torrent_entries::TorrentEntry) -> Download {
         let torrent_serializable = read_torrent(&entry.torrent_path);
+        let serializable_clone = torrent_serializable.clone();
 
         let name = torrent_serializable.info.name.clone();
 
         let temp_location = format!("{}/{}_part", entry.download_path, name);
         let final_location = format!("{}/{}", entry.download_path, name);
-        let mut file: File;
 
-        if !Path::new(&temp_location).exists() && !Path::new(&final_location).exists() {
-            info!("Creating temp file: {}", &temp_location);
-            match fs::OpenOptions::new()
-                .create(true)
-                .read(true)
-                .write(true)
-                .mode(0o770)
-                .open(&temp_location)
-            {
-                Err(_why) => panic!("Couldn't create file {}", &temp_location),
-                Ok(rs) => {
-                    file = rs;
-                }
-            };
-        } else if Path::new(&final_location).exists() {
-            file = fs::OpenOptions::new()
-                .create(false)
-                .read(true)
-                .write(false)
-                .mode(0o770)
-                .open(&final_location)
-                .unwrap();
+        let single_file = torrent_serializable.info.files.is_empty();
+        let location = if Path::new(&final_location).exists() {
+            &final_location
         } else {
-            file = fs::OpenOptions::new()
-                .create(false)
-                .read(true)
-                .write(true)
-                .mode(0o770)
-                .open(&temp_location)
-                .unwrap();
-        }
+            &temp_location
+        };
 
-        let pieces = Download::init_pieces(&torrent_serializable, &mut file);
+        let mut files = Vec::new();
+        if single_file {
+            let path_from_download_root = "";
+            let actual_path = location;
+            let read = true;
+            let write = location == &temp_location;
+            let create = !Path::new(&location).exists();
+            let handle = fs::OpenOptions::new()
+                .create(create)
+                .read(read)
+                .write(write)
+                .mode(0o770)
+                .open(&actual_path)
+                .unwrap();
+            files.push(DownloadFile {
+                path: String::from(path_from_download_root),
+                length: torrent_serializable.info.length,
+                handle: handle,
+            });
+        } else {
+            if !Path::new(&location).exists() {
+                fs::create_dir_all(&location).unwrap();
+            }
+            for file_info in torrent_serializable.info.files {
+                let path_from_download_root = format!("/{}", file_info.path.join("/"));
+                let actual_path = format!("{}{}", location, path_from_download_root);
+                let read = true;
+                let write = location == &temp_location;
+                let create = !Path::new(&actual_path).exists();
+                let handle = fs::OpenOptions::new()
+                    .create(create)
+                    .read(read)
+                    .write(write)
+                    .mode(0o770)
+                    .open(&actual_path)
+                    .unwrap();
+                files.push(DownloadFile {
+                    path: String::from(path_from_download_root),
+                    length: torrent_serializable.info.length,
+                    handle: handle,
+                });
+            }
+        }
 
         let mut download = Download {
             id: entry.id,
@@ -243,11 +279,11 @@ impl Download {
             announcement_url: torrent_serializable.announce,
             name: torrent_serializable.info.name,
             temp_location: temp_location,
-            file: file,
+            files: files,
             peers: Vec::new(),
             piece_length: torrent_serializable.info.piece_length,
             length: torrent_serializable.info.length,
-            pieces: pieces,
+            pieces: Vec::new(),
             info_hash: torrent_serializable.info_hash,
             pending_block_requests: VecDeque::new(),
             downloaded: false,
@@ -255,8 +291,10 @@ impl Download {
             stats: Stats::new(),
             last_check_with_tracker: std::time::SystemTime::UNIX_EPOCH,
             tracker_interval: 60,
+            single_file: single_file,
         };
         download.downloaded = download.get_is_downloaded();
+        download.init_pieces(&serializable_clone);
         download
     }
 
@@ -341,7 +379,7 @@ impl Download {
         self.downloaded
     }
 
-    fn init_pieces(torrent_serializable: &TorrentSerializable, file: &mut File) -> Vec<Piece> {
+    fn init_pieces(&mut self, torrent_serializable: &TorrentSerializable) {
         let piece_infos = parse_pieces(&torrent_serializable);
         let num_pieces = piece_infos.len();
 
@@ -358,12 +396,7 @@ impl Download {
             }
 
             let piece_offset = ((piece_id as i64) * &torrent_serializable.info.piece_length) as u64;
-
-            file.seek(SeekFrom::Start(piece_offset)).unwrap();
-            let mut data = vec![];
-            file.take(piece_length as u64)
-                .read_to_end(&mut data)
-                .unwrap();
+            let data = self.get_content(piece_offset as u32, piece_length as u32);
 
             let pieces_shas: Vec<Sha1> = torrent_serializable
                 .info
@@ -403,21 +436,35 @@ impl Download {
                 len: piece_length as u32,
             });
         }
+        self.pieces = pieces;
+    }
 
-        return pieces;
+    // TODO: what if many files?
+    pub fn get_content(&self, offset: u32, len: u32) -> Vec<u8> {
+        let mut handle = &self.files[0].handle;
+
+        handle
+            .seek(std::io::SeekFrom::Start(offset.into()))
+            .unwrap();
+        let mut data = vec![];
+        handle.take(len as u64).read_to_end(&mut data).unwrap();
+        data
+    }
+
+    // TODO: what if many files?
+    pub fn set_content(&self, offset: u32, data: &[u8]) {
+        let mut handle = &self.files[0].handle;
+
+        trace!("Seeking position: {}", offset);
+        handle.seek(SeekFrom::Start(offset as u64)).unwrap();
+        trace!("Writing to file");
+        handle.write(data).unwrap();
     }
 
     pub fn on_piece_done(&mut self, piece_id: usize) {
         let piece = &self.pieces()[piece_id];
 
-        let mut file = &self.file;
-
-        file.seek(std::io::SeekFrom::Start(piece.offset().into()))
-            .unwrap();
-        let mut data = vec![];
-        file.take(self.piece_length as u64)
-            .read_to_end(&mut data)
-            .unwrap();
+        let data = self.get_content(piece.offset, piece.len);
 
         let expected_hash = self.pieces()[piece_id].sha();
 

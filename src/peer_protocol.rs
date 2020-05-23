@@ -2,9 +2,6 @@ use crate::config;
 use crate::download::{Download, IncomingBlockRequest, Peer};
 use crate::io_primitives;
 
-use std::io::Read;
-use std::io::Seek;
-use std::io::SeekFrom;
 use std::io::Write;
 
 use std::net::TcpStream;
@@ -207,16 +204,9 @@ pub fn send_block(
     download: &mut Download,
     request: &IncomingBlockRequest,
 ) -> Result<(), std::io::Error> {
-    let mut file = &download.file;
-
-    let seek_pos: u64 = ((request.piece_id as i64) * (download.piece_length as i64)
-        + (request.begin as i64)) as u64;
-    file.seek(SeekFrom::Start(seek_pos)).unwrap();
-
-    let mut data = vec![];
-    file.take(request.length as u64)
-        .read_to_end(&mut data)
-        .unwrap();
+    let offset: u32 = ((request.piece_id as i64) * (download.piece_length as i64)
+        + (request.begin as i64)) as u32;
+    let data = download.get_content(offset, request.length as u32);
     let blocklen = data.len();
 
     let peer: &mut Peer = download.peer_mut(request.peer_id);
@@ -339,14 +329,9 @@ fn on_piece(message: Vec<u8>, download: &mut Download, peer_id: usize) {
         pieceindex, peer_id, begin, blocklen, path
     );
 
-    let mut file = &download.file;
-
     let seek_pos: u64 =
         ((pieceindex as i64) * (download.piece_length as i64) + (begin as i64)) as u64;
-    trace!("Seeking position: {}", seek_pos);
-    file.seek(SeekFrom::Start(seek_pos)).unwrap();
-    trace!("Writing to file");
-    file.write(&message[9..]).unwrap();
+    download.set_content(seek_pos as u32, &message[9..]);
 
     download.peer_mut(peer_id).outstanding_block_requests -= 1;
     download.set_block_downloaded(pieceindex as usize, block_id);
