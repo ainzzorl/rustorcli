@@ -3,6 +3,7 @@ mod e2e_tests {
     use assert_cmd::prelude::*;
     use std::process::{Command, Stdio};
 
+    extern crate fs_extra;
     extern crate subprocess;
 
     use subprocess::Exec;
@@ -60,6 +61,42 @@ mod e2e_tests {
                     torrents: vec![
                         String::from("torrent_a_data.torrent"),
                         String::from("torrent_b_data.torrent"),
+                    ],
+                },
+            ],
+        })
+    }
+
+    #[test]
+    #[ignore] // TODO: no [ignored]
+    fn e2e_outgoing_with_transmission_directories() -> Result<(), Box<dyn std::error::Error>> {
+        e2e_from_definition(E2ETestDefinition {
+            description: String::from(
+                "Outgoing connection from rustorcli to transmission; both upload and download; directories",
+            ),
+            clients: vec![
+                Client {
+                    client_type: ClientType::TRANSMISSION,
+                    starting_files: vec![String::from("torrent_d")],
+                    expected_files: vec![
+                        String::from("torrent_d"),
+                        String::from("torrent_e"),
+                    ],
+                    torrents: vec![
+                        String::from("torrent_d.torrent"),
+                        String::from("torrent_e.torrent"),
+                    ],
+                },
+                Client {
+                    client_type: ClientType::RUSTORCLI,
+                    starting_files: vec![String::from("torrent_e")],
+                    expected_files: vec![
+                        String::from("torrent_d"),
+                        String::from("torrent_e"),
+                    ],
+                    torrents: vec![
+                        String::from("torrent_d.torrent"),
+                        String::from("torrent_e.torrent"),
                     ],
                 },
             ],
@@ -153,10 +190,15 @@ mod e2e_tests {
         println!("Copying files");
         for client in definition.clients.iter() {
             for file in client.starting_files.iter() {
-                fs::copy(
-                    format!("./tests/data/generated/{}", file),
-                    format!("{}/{}", client.directory(), file),
-                )?;
+                let source = format!("./tests/data/generated/{}", file);
+                let md = std::fs::metadata(&source).unwrap();
+                if md.is_dir() {
+                    let dest = client.directory();
+                    fs_extra::dir::copy(source, dest, &fs_extra::dir::CopyOptions::new())?;
+                } else {
+                    let dest = format!("{}/{}", client.directory(), file);
+                    fs::copy(source, dest)?;
+                }
             }
         }
 

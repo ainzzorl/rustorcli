@@ -1,4 +1,5 @@
 import os
+from shutil import copyfile
 
 TORRENT_A_LEN = 1000001
 
@@ -54,3 +55,13 @@ with open('tests/data/generated/torrent_a_data_chunk_3', 'w') as f:
         c = chr(ord('a') + (i % 26)) if i >= CHUNK_3_START and i < CHUNK_3_END else '_'
         s += c
     f.write(s)
+
+if not os.path.exists('tests/data/generated/torrent_d/b'):
+    os.makedirs('tests/data/generated/torrent_d/b')
+copyfile('tests/data/generated/torrent_a_data', 'tests/data/generated/torrent_d/torrent_a_data')
+copyfile('tests/data/generated/torrent_b_data', 'tests/data/generated/torrent_d/b/torrent_b_data')
+
+if not os.path.exists('tests/data/generated/torrent_e/a'):
+    os.makedirs('tests/data/generated/torrent_e/a')
+copyfile('tests/data/generated/torrent_a_data', 'tests/data/generated/torrent_e/a/torrent_a_data')
+copyfile('tests/data/generated/torrent_b_data', 'tests/data/generated/torrent_e/torrent_b_data')

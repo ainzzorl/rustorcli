@@ -23,6 +23,10 @@ e2e-outgoing-three-way :
 			 RUST_BACKTRACE=1 RUST_LOG=rustorcli=trace cargo test e2e_outgoing_three_way -- --nocapture
 			 cargo run stop
 
+e2e-outgoing-with-transmission-directories :
+		   # TODO: no --ignored
+			 RUST_BACKTRACE=1 RUST_LOG=rustorcli=trace cargo test e2e_outgoing_with_transmission_directories -- --nocapture --ignored
+
 test-e2e :
 			 RUST_BACKTRACE=1 RUST_LOG=rustorcli=trace cargo test e2e_tests -- --test-threads=1 --nocapture
 
