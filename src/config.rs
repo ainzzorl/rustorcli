@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-pub const PORT: u32 = 6881;
+pub const PORT: u32 = 6893;
 
 pub const REQUEST_EXPIRATION: Duration = Duration::from_secs(30);
 pub const MAX_OUTSTANDING_REQUESTS_PER_PEER: i32 = 10;
