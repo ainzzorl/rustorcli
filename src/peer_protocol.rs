@@ -110,14 +110,15 @@ pub fn request_block(
     payload.extend(io_primitives::u32_to_bytes(piece_id as u32));
     payload.extend(io_primitives::u32_to_bytes(block.offset() as u32));
     payload.extend(io_primitives::u32_to_bytes(block.len() as u32));
-    send_message(
-        download.peers_mut()[peer_id]
-            .stream
-            .as_mut()
-            .expect("Expect the stream to be present"),
-        TYPE_REQUEST,
-        &payload,
-    )?;
+    let s = download.peers_mut()[peer_id].stream.as_mut();
+    if s.is_none() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Stream is absent!",
+        ));
+    }
+
+    send_message(s.unwrap(), TYPE_REQUEST, &payload)?;
 
     trace!("Done requesting block");
     return Ok(());
@@ -141,13 +142,15 @@ pub fn send_bitfield(peer_id: usize, download: &mut Download) -> Result<(), std:
         }
     }
 
-    let peer: &mut Peer = download.peer_mut(peer_id);
-    let s: &mut TcpStream = peer
-        .stream
-        .as_mut()
-        .expect("Expected the stream to be present");
+    let s = download.peers_mut()[peer_id].stream.as_mut();
+    if s.is_none() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Stream is absent!",
+        ));
+    }
 
-    send_message(s, TYPE_BITFIELD, &payload)
+    send_message(s.unwrap(), TYPE_BITFIELD, &payload)
 }
 
 fn on_bitfield(message: Vec<u8>, download: &mut Download, peer_id: usize) {
@@ -192,12 +195,15 @@ pub fn send_unchoke(peer_id: usize, download: &mut Download) -> Result<(), std::
     );
 
     let peer: &mut Peer = download.peer_mut(peer_id);
-    let s: &mut TcpStream = peer
-        .stream
-        .as_mut()
-        .expect("Expected the stream to be present");
+    let s = peer.stream.as_mut();
+    if s.is_none() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Stream is absent!",
+        ));
+    }
 
-    send_message(s, TYPE_UNCHOKED, &Vec::new())
+    send_message(s.unwrap(), TYPE_UNCHOKED, &Vec::new())
 }
 
 pub fn send_block(
@@ -210,17 +216,20 @@ pub fn send_block(
     let blocklen = data.len();
 
     let peer: &mut Peer = download.peer_mut(request.peer_id);
-    let s: &mut TcpStream = peer
-        .stream
-        .as_mut()
-        .expect("Expected the stream to be present");
+    let s = peer.stream.as_mut();
+    if s.is_none() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Stream is absent!",
+        ));
+    }
 
     let mut payload: Vec<u8> = Vec::new();
     payload.extend(io_primitives::u32_to_bytes(request.piece_id as u32));
     payload.extend(io_primitives::u32_to_bytes(request.begin as u32));
     payload.extend(data);
 
-    send_message(s, TYPE_PIECE, &payload)?;
+    send_message(s.unwrap(), TYPE_PIECE, &payload)?;
     download.stats_mut().add_uploaded(blocklen as u64);
     return Ok(());
 }
