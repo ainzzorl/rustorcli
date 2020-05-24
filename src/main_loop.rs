@@ -299,6 +299,39 @@ fn process_new_announcements(
     }
 }
 
+fn remove_expired_requests(downloads: &mut HashMap<u32, Download>) {
+    let now = std::time::SystemTime::now();
+    let mut to_decrement = vec![];
+    for (download_id, download) in downloads.iter_mut() {
+        for piece in download.pieces_mut() {
+            for block in piece.blocks_mut() {
+                if block.request_record().is_none() {
+                    continue;
+                }
+
+                // TODO: special handling if done?
+
+                let record = block.request_record().as_ref().unwrap();
+                let request_time = record.time;
+                let diff = now.duration_since(request_time).unwrap();
+                if diff > config::REQUEST_EXPIRATION {
+                    let peer_id = record.peer_id;
+                    warn!(
+                        "Block request has expired. download_id={}, peer_id={}",
+                        download_id, peer_id
+                    );
+                    to_decrement.push((download_id.clone(), peer_id.clone()));
+                    block.set_request_record(None);
+                }
+            }
+        }
+    }
+    for (download_id, peer_id) in to_decrement {
+        let download = downloads.get_mut(&download_id).unwrap();
+        download.peer_mut(peer_id).outstanding_block_requests -= 1;
+    }
+}
+
 fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: bool) {
     let persistent_state_location = format!("{}/{}", util::config_directory(), "state.json");
     let initial_persistent_state = state_persistence::load(&persistent_state_location);
@@ -380,6 +413,7 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: b
         );
         receive_incoming_connections(&mut tcp_listener, my_id, downloads);
         receive_messages(downloads);
+        remove_expired_requests(downloads);
         broadcast_have(downloads);
 
         execute_outgoing_block_requests(downloads);

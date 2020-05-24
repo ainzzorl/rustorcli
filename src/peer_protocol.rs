@@ -333,7 +333,14 @@ fn on_piece(message: Vec<u8>, download: &mut Download, peer_id: usize) {
         ((pieceindex as i64) * (download.piece_length as i64) + (begin as i64)) as u64;
     download.set_content(seek_pos, &message[9..]);
 
-    download.peer_mut(peer_id).outstanding_block_requests -= 1;
+    let block = &mut download.pieces_mut()[pieceindex as usize].blocks_mut()[block_id];
+    if let Some(request_record) = block.request_record() {
+        if request_record.peer_id == peer_id {
+            block.set_request_record(None);
+            download.peer_mut(peer_id).outstanding_block_requests -= 1;
+        }
+    }
+
     download.set_block_downloaded(pieceindex as usize, block_id);
     download.stats_mut().add_downloaded(blocklen as u64);
 }

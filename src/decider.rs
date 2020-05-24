@@ -53,7 +53,7 @@ pub fn decide_block_requests(download: &mut Download) -> Vec<BlockRequest> {
                 break;
             }
             block_id += 1;
-            if block.downloaded() || request_is_active(block.request_record(), now) {
+            if block.downloaded() || block.request_record().is_some() {
                 continue;
             }
 
@@ -188,14 +188,4 @@ fn find_peer(download: &Download, piece_id: usize, added_in_this: &Vec<i32>) -> 
         return Some(peer_index);
     }
     None
-}
-
-fn request_is_active(record: &Option<BlockRequestRecord>, now: SystemTime) -> bool {
-    if record.is_none() {
-        return false;
-    }
-    let request_time = record.as_ref().unwrap().time;
-    let diff = now.duration_since(request_time).unwrap();
-
-    return diff <= config::REQUEST_EXPIRATION;
 }
