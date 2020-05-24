@@ -24,8 +24,7 @@ e2e-outgoing-three-way :
 			 cargo run stop
 
 e2e-outgoing-with-transmission-directories :
-		   # TODO: no --ignored
-			 RUST_BACKTRACE=1 RUST_LOG=rustorcli=trace cargo test e2e_outgoing_with_transmission_directories -- --nocapture --ignored
+			 RUST_BACKTRACE=1 RUST_LOG=rustorcli=trace cargo test e2e_outgoing_with_transmission_directories -- --nocapture
 
 test-e2e :
 			 RUST_BACKTRACE=1 RUST_LOG=rustorcli=trace cargo test e2e_tests -- --test-threads=1 --nocapture
@@ -56,6 +55,7 @@ install-test-dependencies:
 			 sudo npm install -g bittorrent-tracker
 			 sudo npm install -g webtorrent-cli
 			 sudo apt install transmission-cli
+			 sudo apt install transmission-daemon
 
 generate-test-data:
 			 python tests/generate_test_data.py

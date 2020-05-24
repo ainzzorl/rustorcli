@@ -264,9 +264,7 @@ mod e2e_tests {
 
     fn restart_tracker() {
         println!("Killing tracker");
-        Exec::shell("lsof -i tcp:8000 | awk 'NR!=1 {print $2}' | xargs kill")
-            .join()
-            .unwrap();
+        kill_tracker();
 
         println!("Starting torrent tracker");
         Command::new("bittorrent-tracker")
@@ -277,6 +275,19 @@ mod e2e_tests {
             .stdout(Stdio::null())
             .spawn()
             .expect("bittorrent-tracker command failed to start");
+    }
+
+    // TODO: hack to make it run on Linux subsystem for Windows.
+    #[cfg(not(target_os = "macos"))]
+    fn kill_tracker() {
+        Exec::shell("killall node").join().unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    fn kill_tracker() {
+        Exec::shell("lsof -i tcp:8000 | awk 'NR!=1 {print $2}' | xargs kill")
+            .join()
+            .unwrap();
     }
 
     fn reset_destination_directories(clients: &Vec<Client>) {
