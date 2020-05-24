@@ -318,18 +318,17 @@ impl Download {
     }
 
     pub fn register_outgoing_peer(&mut self, peer_info: PeerInfo) {
+        if peer_info.port == config::PORT {
+            // Don't connect to self.
+            // TODO: use id instead.
+            debug!(
+                "Skipping peer - looks like it's us! download_id={}, ip={}, port={}",
+                self.id, peer_info.ip, peer_info.port
+            );
+            return;
+        }
         for peer in self.peers.iter() {
             if let Some(info) = &peer.peer_info {
-                if info.port == config::PORT {
-                    // Don't connect to self.
-                    // TODO: use id instead.
-                    debug!(
-                        "Skipping peer - looks like it's us! download_id={}, ip={}, port={}",
-                        self.id, peer_info.ip, peer_info.port
-                    );
-                    continue;
-                }
-
                 if info.ip == peer_info.ip && info.port == peer_info.port {
                     debug!(
                         "Skipping peer - already registered. download_id={}, ip={}, port={}",
