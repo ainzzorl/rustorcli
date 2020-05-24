@@ -50,7 +50,7 @@ run-current:
 			 cargo run stop
 			 rm -rf $(CONFIG_PATH)
 			 cargo run add -t "$$(pwd)/data/current.torrent" -d "$$(pwd)/target/tmp/current"
-			 RUST_LOG=trace cargo run start
+			 RUST_LOG=rustorcli=trace cargo run start
 
 install-test-dependencies:
 			 sudo npm install -g bittorrent-tracker

@@ -310,8 +310,8 @@ impl Download {
             tracker_interval: 60,
             single_file: single_file,
         };
-        download.downloaded = download.get_is_downloaded();
         download.init_pieces(&serializable_clone);
+        download.downloaded = download.get_is_downloaded();
         download
     }
 
@@ -614,8 +614,10 @@ impl Download {
                 "Not yet done: downloaded {}/{} blocks. E.g. missing: {}",
                 downloaded_blocks, num_blocks, missing
             );
+            return false
         }
-        return num_blocks == downloaded_blocks;
+        info!("The download is done!");
+        true
     }
 }
 
