@@ -213,6 +213,9 @@ fn list() {
         let mut downloaded_pieces = String::from("?");
         let mut total_pieces = String::from("?");
         let mut pieces_ratio = String::from("?");
+        let mut we_unchoked = String::from("?");
+        let mut they_interested = String::from("?");
+        let mut name = String::from("?");
         match states.get(&entry.id) {
             Some(state) => {
                 downloaded = state.downloaded.to_string();
@@ -223,6 +226,9 @@ fn list() {
                 incoming_peers = state.incoming_peers.to_string();
                 outgoing_peers = state.outgoing_peers.to_string();
                 connected_peers = state.connected_peers.to_string();
+                they_interested = state.they_interested.to_string();
+                we_unchoked = state.we_unchoked.to_string();
+                name = state.name.clone();
                 total_pieces = state.total_pieces.to_string();
                 downloaded_pieces = state.downloaded_pieces.to_string();
                 let ratio = state.downloaded_pieces as f64 / state.total_pieces as f64;
@@ -233,7 +239,7 @@ fn list() {
         println!("{}", separator);
         println!("Id: {}", entry.id);
         println!("Torrent: {}", entry.torrent_path);
-        println!("Destination: {}", entry.download_path);
+        println!("Destination: {}/{}", entry.download_path, name);
         println!("Done: {}", done);
         println!("Size: {} bytes", size);
         println!("Downloaded: {} bytes", downloaded);
@@ -245,6 +251,10 @@ fn list() {
         println!(
             "Connected to {} peer(s) of total {} ({} incoming + {} outgoing)",
             connected_peers, total_peers, incoming_peers, outgoing_peers
+        );
+        println!(
+            "Not choking us: {}/{}, interested in us: {}/{}",
+            we_unchoked, connected_peers, they_interested, connected_peers
         );
         if cnt == entries.len() - 1 {
             println!("{}", separator);

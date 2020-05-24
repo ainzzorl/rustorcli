@@ -20,6 +20,9 @@ pub struct PersistentDownloadState {
     pub downloaded_pieces: u32,
     pub total_pieces: usize,
     pub done: bool,
+    pub name: String,
+    pub they_interested: u32,
+    pub we_unchoked: u32,
 }
 
 pub fn persist(downloads: &mut HashMap<u32, Download>, location: &String) {
@@ -30,6 +33,8 @@ pub fn persist(downloads: &mut HashMap<u32, Download>, location: &String) {
         let mut outgoing_peers = 0;
         let mut connected_peers = 0;
         let mut downloaded_pieces = 0;
+        let mut we_unchoked = 0;
+        let mut they_interested = 0;
 
         for peer in download.peers() {
             if peer.is_incoming() {
@@ -39,6 +44,12 @@ pub fn persist(downloads: &mut HashMap<u32, Download>, location: &String) {
             }
             if peer.is_connected() {
                 connected_peers += 1;
+                if peer.they_interested {
+                    they_interested += 1;
+                }
+                if !peer.we_choked {
+                    we_unchoked += 1;
+                }
             }
         }
         for piece in download.pieces() {
@@ -59,6 +70,9 @@ pub fn persist(downloads: &mut HashMap<u32, Download>, location: &String) {
                 downloaded_pieces: downloaded_pieces,
                 total_pieces: download.pieces().len(),
                 done: download.is_downloaded(),
+                they_interested: they_interested,
+                we_unchoked: we_unchoked,
+                name: download.name.clone(),
             },
         );
     }

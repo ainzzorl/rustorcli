@@ -142,6 +142,7 @@ pub struct Peer {
 
     pub we_interested: bool,
     pub we_choked: bool,
+    pub they_interested: bool,
 
     pub peer_info: Option<PeerInfo>,
 
@@ -162,6 +163,7 @@ impl Peer {
             next_message_length: 0,
             peer_info: peer_info,
             we_interested: false,
+            they_interested: false,
             we_choked: true,
             outstanding_block_requests: 0,
             has_piece: vec![false; num_pieces],
@@ -614,7 +616,7 @@ impl Download {
                 "Not yet done: downloaded {}/{} blocks. E.g. missing: {}",
                 downloaded_blocks, num_blocks, missing
             );
-            return false
+            return false;
         }
         info!("The download is done!");
         true

@@ -32,11 +32,11 @@ pub fn process_message(message: Vec<u8>, download: &mut Download, peer_id: usize
         }
         TYPE_INTERESTED => {
             info!("Interested! peer_id={}", peer_id);
-            // TODO: do something
+            peer.they_interested = true;
         }
         TYPE_NOT_INTERESTED => {
             info!("Not interested! peer_id={}", peer_id);
-            // TODO: do something
+            peer.they_interested = false;
         }
         TYPE_HAVE => {
             info!("Have! peer_id={}", peer_id);
