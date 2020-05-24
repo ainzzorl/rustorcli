@@ -571,13 +571,14 @@ impl Download {
             info!("Hashes match for piece {}", piece_id);
             self.recently_downloaded_pieces.push(piece_id);
         } else {
-            panic!(
-                "Hashes don't match for piece {}. Expected: {}, actual: {}",
+            error!(
+                "Hashes don't match for piece {}. Expected: {}, actual: {}. Resetting the piece...",
                 piece_id,
                 hex::encode(expected_hash),
                 hex::encode(actual_hash)
             );
-            // TODO: do something smarter, e.g. retry
+            let piece = &mut self.pieces_mut()[piece_id];
+            piece.reset();
         }
     }
 
@@ -667,6 +668,13 @@ impl Piece {
     pub fn offset(&self) -> u64 {
         self.offset
     }
+
+    fn reset(&mut self) {
+        self.downloaded = false;
+        for block in self.blocks.iter_mut() {
+            block.reset();
+        }
+    }
 }
 
 impl Block {
@@ -692,6 +700,11 @@ impl Block {
 
     pub fn set_request_record(&mut self, request_record: Option<BlockRequestRecord>) {
         self.request_record = request_record;
+    }
+
+    fn reset(&mut self) {
+        // TODO: reset request record? But then would need to update outstanding count...
+        self.downloaded = false;
     }
 }
 
