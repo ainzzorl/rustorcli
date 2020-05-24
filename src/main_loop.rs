@@ -139,12 +139,6 @@ fn request_new_connections(
 
         let peer_info = peer.peer_info.as_ref().unwrap();
 
-        if peer_info.port == config::PORT {
-            // Don't connect to self.
-            // TODO: use id instead.
-            continue;
-        }
-
         info!(
             "Requesting connection through the channel. peer_id={}, download_id={}",
             peer_id, download_id
