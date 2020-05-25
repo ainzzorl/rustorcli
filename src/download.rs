@@ -268,7 +268,7 @@ impl Download {
 
         let name = torrent_serializable.info.name.clone();
 
-        let temp_location = format!("{}/{}_part", entry.download_path, name);
+        let temp_location = format!("{}/{}{}", entry.download_path, name, get_temp_suffix());
         let final_location = format!("{}/{}", entry.download_path, name);
 
         let single_file = torrent_serializable.info.files.is_empty();
@@ -641,8 +641,10 @@ impl Download {
     fn on_done(&self) {
         info!("Download is done!");
         let dest = format!("{}/{}", self.download_path, self.name);
-        info!("Moving {} to {}", self.temp_location, dest);
-        fs::rename(&self.temp_location, dest).unwrap();
+        if self.temp_location != dest {
+            info!("Moving {} to {}", self.temp_location, dest);
+            fs::rename(&self.temp_location, dest).unwrap();
+        }
     }
 
     fn get_is_downloaded(&self) -> bool {
@@ -810,4 +812,16 @@ fn get_info_hash(data: &[u8]) -> Result<Vec<u8>, Error> {
     } else {
         bail!("meta file is no dict");
     }
+}
+
+#[cfg(target_os = "macos")]
+fn get_temp_suffix() -> String {
+    String::from(".part")
+}
+
+// TODO: fix it
+// Temp hack to make it not crash moving dirs on linux.
+#[cfg(not(target_os = "macos"))]
+fn get_temp_suffix() -> String {
+    String::from("")
 }
