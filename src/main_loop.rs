@@ -237,14 +237,7 @@ fn process_new_connections(
                     download.peers_mut()[response.peer_id].being_connected = false;
                     peer_protocol::send_bitfield(response.peer_id, download).ok();
                     peer_protocol::send_unchoke(response.peer_id, download).ok();
-                    if peer_protocol::send_interested(
-                        &mut download.peers_mut()[response.peer_id]
-                            .stream
-                            .as_mut()
-                            .unwrap(),
-                    )
-                    .is_ok()
-                    {
+                    if peer_protocol::send_interested(download, response.peer_id).is_ok() {
                         download.peer_mut(response.peer_id).we_interested = true;
                     };
                 }
@@ -457,47 +450,31 @@ fn execute_outgoing_block_requests(downloads: &mut HashMap<u32, Download>) {
             );
         }
 
-        let mut to_reset = Vec::new();
         for request in requests {
-            let peer = &mut download.peers_mut()[request.peer_id];
-            let stream = &mut peer
-                .stream
-                .as_mut()
-                .expect("Expected the stream to be present");
-
-            if !peer.we_interested {
-                if peer_protocol::send_interested(stream).is_err() {
-                    info!(
-                        "Couldn't send interested - resetting connection with peer_id={}",
-                        request.peer_id
-                    );
-                    to_reset.push(request.peer_id);
+            let interested = &download.peers()[request.peer_id].we_interested;
+            if !interested {
+                match peer_protocol::send_interested(download, request.peer_id) {
+                    Ok(()) => {
+                        download.peer_mut(request.peer_id).we_interested = true;
+                    }
+                    Err(_) => {
+                        continue;
+                    }
+                }
+                if peer_protocol::send_interested(download, request.peer_id).is_err() {
                     continue;
                 }
-                peer.we_interested = true;
             } else {
                 debug!("We are already interested in the peer");
             }
 
-            if peer_protocol::request_block(
+            peer_protocol::request_block(
                 &mut download,
                 request.piece_id,
                 request.block_id,
                 request.peer_id,
             )
-            .is_err()
-            {
-                info!(
-                    "Couldn't request piece - resetting connection with peer_id={}",
-                    request.peer_id
-                );
-                to_reset.push(request.peer_id);
-            }
-        }
-
-        for peer_id in to_reset {
-            let peer = &mut download.peers_mut()[peer_id];
-            peer.stream = None;
+            .ok();
         }
     }
 }

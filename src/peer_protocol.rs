@@ -17,6 +17,49 @@ const TYPE_BITFIELD: u8 = 5;
 const TYPE_REQUEST: u8 = 6;
 const TYPE_PIECE: u8 = 7;
 
+enum Message {
+    Unchoke,
+    Interested,
+    Have(u32),
+    Bitfield(Vec<u8>),
+    Request(u32, u32, u32),
+    Piece(u32, u32, Vec<u8>),
+}
+
+impl Message {
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut payload = vec![];
+        match self {
+            Message::Unchoke => payload.push(TYPE_UNCHOKED),
+            Message::Interested => payload.push(TYPE_INTERESTED),
+            Message::Have(piece_id) => {
+                payload.push(TYPE_HAVE);
+                payload.extend(io_primitives::u32_to_bytes(*piece_id).into_iter());
+            }
+            Message::Bitfield(bytes) => {
+                payload.push(TYPE_BITFIELD);
+                payload.extend(bytes);
+            }
+            Message::Request(piece_id, offset, length) => {
+                payload.push(TYPE_REQUEST);
+                payload.extend(io_primitives::u32_to_bytes(*piece_id).into_iter());
+                payload.extend(io_primitives::u32_to_bytes(*offset).into_iter());
+                payload.extend(io_primitives::u32_to_bytes(*length).into_iter());
+            }
+            Message::Piece(piece_id, offset, data) => {
+                payload.push(TYPE_PIECE);
+                payload.extend(io_primitives::u32_to_bytes(*piece_id).into_iter());
+                payload.extend(io_primitives::u32_to_bytes(*offset).into_iter());
+                payload.extend(data);
+            }
+        };
+
+        let mut size = io_primitives::u32_to_bytes(payload.len() as u32);
+        size.extend(payload);
+        size
+    }
+}
+
 pub fn process_message(message: Vec<u8>, download: &mut Download, peer_id: usize) {
     let resptype = message[0];
     info!("Response type: {}", resptype);
@@ -60,9 +103,8 @@ pub fn process_message(message: Vec<u8>, download: &mut Download, peer_id: usize
     }
 }
 
-pub fn send_interested(stream: &mut TcpStream) -> Result<(), std::io::Error> {
-    info!("Sending interested");
-    return send_message(stream, TYPE_INTERESTED, &Vec::new());
+pub fn send_interested(download: &mut Download, peer_id: usize) -> Result<(), std::io::Error> {
+    send_msg(download, peer_id, Message::Interested)
 }
 
 pub fn send_have(
@@ -75,17 +117,7 @@ pub fn send_have(
         download.id, peer_id, piece_id
     );
 
-    let peer = download.peers_mut()[peer_id].stream.as_mut();
-    if peer.is_none() {
-        info!("Stream is already closed");
-        return Ok(());
-    }
-
-    let mut payload: Vec<u8> = Vec::new();
-    payload.extend(io_primitives::u32_to_bytes(piece_id as u32));
-    send_message(peer.unwrap(), TYPE_HAVE, &payload)?;
-
-    return Ok(());
+    send_msg(download, peer_id, Message::Have(piece_id as u32))
 }
 
 pub fn request_block(
@@ -95,33 +127,19 @@ pub fn request_block(
     peer_id: usize,
 ) -> Result<(), std::io::Error> {
     let block = &download.pieces()[piece_id].blocks()[block_id];
+    let block_len = block.len();
+    let block_offset = block.offset();
 
     info!(
         "Requesting download_id={}, peer_id={}, block={} from piece_id={}, offset={}, len={}",
-        download.id,
-        peer_id,
-        block_id,
-        piece_id,
-        block.offset(),
-        block.len()
+        download.id, peer_id, block_id, piece_id, block_offset, block_len
     );
 
-    let mut payload: Vec<u8> = Vec::new();
-    payload.extend(io_primitives::u32_to_bytes(piece_id as u32));
-    payload.extend(io_primitives::u32_to_bytes(block.offset() as u32));
-    payload.extend(io_primitives::u32_to_bytes(block.len() as u32));
-    let s = download.peers_mut()[peer_id].stream.as_mut();
-    if s.is_none() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "Stream is absent!",
-        ));
-    }
-
-    send_message(s.unwrap(), TYPE_REQUEST, &payload)?;
-
-    trace!("Done requesting block");
-    return Ok(());
+    send_msg(
+        download,
+        peer_id,
+        Message::Request(piece_id as u32, block_offset as u32, block_len as u32),
+    )
 }
 
 pub fn send_bitfield(peer_id: usize, download: &mut Download) -> Result<(), std::io::Error> {
@@ -142,15 +160,7 @@ pub fn send_bitfield(peer_id: usize, download: &mut Download) -> Result<(), std:
         }
     }
 
-    let s = download.peers_mut()[peer_id].stream.as_mut();
-    if s.is_none() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "Stream is absent!",
-        ));
-    }
-
-    send_message(s.unwrap(), TYPE_BITFIELD, &payload)
+    send_msg(download, peer_id, Message::Bitfield(payload))
 }
 
 fn on_bitfield(message: Vec<u8>, download: &mut Download, peer_id: usize) {
@@ -194,16 +204,7 @@ pub fn send_unchoke(peer_id: usize, download: &mut Download) -> Result<(), std::
         peer_id, download.id
     );
 
-    let peer: &mut Peer = download.peer_mut(peer_id);
-    let s = peer.stream.as_mut();
-    if s.is_none() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "Stream is absent!",
-        ));
-    }
-
-    send_message(s.unwrap(), TYPE_UNCHOKED, &Vec::new())
+    send_msg(download, peer_id, Message::Unchoke)
 }
 
 pub fn send_block(
@@ -215,23 +216,17 @@ pub fn send_block(
     let data = download.get_content(offset, request.length);
     let blocklen = data.len();
 
-    let peer: &mut Peer = download.peer_mut(request.peer_id);
-    let s = peer.stream.as_mut();
-    if s.is_none() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "Stream is absent!",
-        ));
+    match send_msg(
+        download,
+        request.peer_id,
+        Message::Piece(request.piece_id as u32, request.begin as u32, data),
+    ) {
+        Ok(()) => {
+            download.stats_mut().add_uploaded(blocklen as u64);
+            Ok(())
+        }
+        Err(e) => Err(e),
     }
-
-    let mut payload: Vec<u8> = Vec::new();
-    payload.extend(io_primitives::u32_to_bytes(request.piece_id as u32));
-    payload.extend(io_primitives::u32_to_bytes(request.begin as u32));
-    payload.extend(data);
-
-    send_message(s.unwrap(), TYPE_PIECE, &payload)?;
-    download.stats_mut().add_uploaded(blocklen as u64);
-    return Ok(());
 }
 
 pub fn receive_message(
@@ -354,16 +349,26 @@ fn on_piece(message: Vec<u8>, download: &mut Download, peer_id: usize) {
     download.stats_mut().add_downloaded(blocklen as u64);
 }
 
-fn send_message(
-    stream: &mut TcpStream,
-    msgtype: u8,
-    payload: &Vec<u8>,
+fn send_msg(
+    download: &mut Download,
+    peer_id: usize,
+    message: Message,
 ) -> Result<(), std::io::Error> {
-    let mut payload_with_type: Vec<u8> = Vec::new();
-    payload_with_type.push(msgtype);
-    payload_with_type.extend(payload);
-    let mut to_write: Vec<u8> = Vec::new();
-    to_write.extend(io_primitives::u32_to_bytes(payload_with_type.len() as u32));
-    to_write.extend(payload_with_type);
-    return stream.write_all(&to_write);
+    let stream = download.peers_mut()[peer_id].stream.as_mut();
+    if stream.is_none() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Stream is absent!",
+        ));
+    }
+
+    match stream.unwrap().write_all(&message.serialize()) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            warn!("Error sending message to peer_id={}, download_id={}: {:?}. Resetting the connection", peer_id, download.id, e);
+            let peer = &mut download.peers_mut()[peer_id];
+            peer.stream = None;
+            Err(e)
+        }
+    }
 }
