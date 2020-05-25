@@ -38,7 +38,7 @@ test:
 cleanup:
 			 cargo run stop
 			 killall transmission-daemon || true
-			 killall WebTorrent || true
+			 pgrep WebTorrent | xargs kill -9 || true
 			 killall rustorcli || true
 			 lsof -i:8000 | awk 'NR!=1 {print $$2}' | xargs kill -9
 			 rm -rf target/tmp/

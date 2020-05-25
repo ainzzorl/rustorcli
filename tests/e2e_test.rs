@@ -370,7 +370,7 @@ mod e2e_tests {
 
     fn stop_and_clean_webtorrent() -> Result<(), Box<dyn std::error::Error>> {
         println!("Stopping webtorrent");
-        Exec::shell("killall WebTorrent").join()?;
+        Exec::shell("pgrep WebTorrent | xargs kill -9").join()?;
         return Ok(());
     }
 
