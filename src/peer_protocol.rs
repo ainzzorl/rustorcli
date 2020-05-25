@@ -367,6 +367,13 @@ fn send_msg(
 
     match stream.unwrap().write_all(&message.serialize()) {
         Ok(()) => Ok(()),
+        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+            debug!(
+                "Would-block error sending message to peer_id={}, download_id={}",
+                peer_id, download.id
+            );
+            Ok(())
+        }
         Err(e) => {
             warn!("Error sending message to peer_id={}, download_id={}: {:?}. Resetting the connection", peer_id, download.id, e);
             download.on_broken_connection(peer_id);
