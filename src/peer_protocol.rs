@@ -276,6 +276,7 @@ pub fn receive_message(
                 let result = peer.buf.clone();
                 peer.buf = Vec::new();
                 peer.next_message_length = 0;
+                peer.on_incoming_message();
                 trace!("Successfully read the message of len {}", result.len());
                 return Ok(Some(result));
             } else {
@@ -341,7 +342,9 @@ fn on_piece(message: Vec<u8>, download: &mut Download, peer_id: usize) {
     if let Some(request_record) = block.request_record() {
         if request_record.peer_id == peer_id {
             block.set_request_record(None);
-            download.peer_mut(peer_id).outstanding_block_requests -= 1;
+            if download.peer_mut(peer_id).outstanding_block_requests > 0 {
+                download.peer_mut(peer_id).outstanding_block_requests -= 1;
+            }
         }
     }
 
@@ -366,8 +369,7 @@ fn send_msg(
         Ok(()) => Ok(()),
         Err(e) => {
             warn!("Error sending message to peer_id={}, download_id={}: {:?}. Resetting the connection", peer_id, download.id, e);
-            let peer = &mut download.peers_mut()[peer_id];
-            peer.stream = None;
+            download.on_broken_connection(peer_id);
             Err(e)
         }
     }

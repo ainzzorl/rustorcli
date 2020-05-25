@@ -235,6 +235,8 @@ fn process_new_connections(
                         .expect("Download must exist");
                     download.peers_mut()[response.peer_id].stream = Some(stream);
                     download.peers_mut()[response.peer_id].being_connected = false;
+                    download.peers_mut()[response.peer_id].on_incoming_message();
+                    download.peers_mut()[response.peer_id].outstanding_block_requests = 0;
                     peer_protocol::send_bitfield(response.peer_id, download).ok();
                     peer_protocol::send_unchoke(response.peer_id, download).ok();
                     if peer_protocol::send_interested(download, response.peer_id).is_ok() {
@@ -242,7 +244,7 @@ fn process_new_connections(
                     };
                 }
                 Err(e) => {
-                    warn!("Failed to establish connection, {:?}", e);
+                    info!("Failed to establish connection, {:?}", e);
                     let download = downloads.get_mut(&e.download_id()).unwrap();
                     download.peer_mut(e.peer_id()).being_connected = false;
                 }
@@ -412,6 +414,7 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: b
         execute_outgoing_block_requests(downloads);
         execute_incoming_block_requests(downloads);
 
+        reset_inactive_connections(downloads);
         request_resetting_broken_connections(
             downloads,
             &my_id,
@@ -542,6 +545,31 @@ fn receive_messages(downloads: &mut HashMap<u32, Download>) {
         for p in peers_to_reset {
             download.on_broken_connection(p);
         }
+    }
+}
+
+fn reset_inactive_connections(downloads: &mut HashMap<u32, Download>) {
+    debug!("Resetting inactive connections");
+    let mut to_reset = vec![];
+    for (download_id, download) in downloads.iter_mut() {
+        let peers = download.peers_mut();
+        for (peer_id, peer) in peers.into_iter().enumerate() {
+            if peer.stream.is_none() {
+                continue;
+            }
+            let inactivity = peer.last_incoming_message.elapsed().unwrap();
+            if inactivity > config::INACTIVITY_TIMEOUT {
+                warn!(
+                    "Connection is inactive - resetting. download_id={}, peer_id={}",
+                    download_id, peer_id
+                );
+                to_reset.push((download_id.clone(), peer_id));
+            }
+        }
+    }
+    for (download_id, peer_id) in to_reset {
+        let download = downloads.get_mut(&download_id).unwrap();
+        download.on_broken_connection(peer_id);
     }
 }
 

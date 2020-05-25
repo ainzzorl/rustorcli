@@ -150,6 +150,7 @@ pub struct Peer {
 
     pub has_piece: Vec<bool>,
 
+    pub last_incoming_message: std::time::SystemTime,
     pub last_reconnect_attempt: std::time::SystemTime,
     pub reconnect_attempts: u32,
     pub being_connected: bool,
@@ -168,6 +169,7 @@ impl Peer {
             outstanding_block_requests: 0,
             has_piece: vec![false; num_pieces],
             last_reconnect_attempt: std::time::SystemTime::UNIX_EPOCH,
+            last_incoming_message: std::time::SystemTime::now(),
             reconnect_attempts: 0,
             being_connected: false,
         }
@@ -179,6 +181,10 @@ impl Peer {
 
     pub fn is_connected(&self) -> bool {
         self.stream.is_some()
+    }
+
+    pub fn on_incoming_message(&mut self) {
+        self.last_incoming_message = std::time::SystemTime::now();
     }
 }
 

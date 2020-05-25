@@ -18,3 +18,5 @@ pub const TICK_INTERVAL: Duration = std::time::Duration::from_millis(100);
 pub const MAX_INCOMING_MESSAGES_PER_TICK_PER_DOWNLOAD: u32 = 100;
 
 pub const OUTGOING_CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
+
+pub const INACTIVITY_TIMEOUT: Duration = Duration::from_secs(60);
