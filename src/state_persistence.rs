@@ -23,6 +23,23 @@ pub struct PersistentDownloadState {
     pub name: String,
     pub they_interested: u32,
     pub we_unchoked: u32,
+
+    pub peers: Vec<PersistentPeerState>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PersistentPeerState {
+    pub id: usize,
+    pub ip: String,
+    pub port: String,
+    pub outgoing: bool,
+    pub connected: bool,
+    pub being_connected: bool,
+    pub we_choked: bool,
+    pub they_interested: bool,
+    pub reconnect_attempts: u32,
+    pub last_reconnect_attempt: std::time::Duration,
+    pub last_incoming_message: std::time::Duration,
 }
 
 pub fn persist(downloads: &mut HashMap<u32, Download>, location: &String) {
@@ -73,10 +90,43 @@ pub fn persist(downloads: &mut HashMap<u32, Download>, location: &String) {
                 they_interested: they_interested,
                 we_unchoked: we_unchoked,
                 name: download.name.clone(),
+                peers: get_persistent_peers(&download),
             },
         );
     }
     serde_json::to_writer(&File::create(location).unwrap(), &state_map).unwrap();
+}
+
+fn get_persistent_peers(download: &Download) -> Vec<PersistentPeerState> {
+    let mut result = Vec::new();
+    for (peer_id, peer) in download.peers().iter().enumerate() {
+        let ip;
+        let port;
+        match &peer.peer_info {
+            Some(peer_info) => {
+                ip = peer_info.ip.to_string();
+                port = peer_info.port.to_string();
+            }
+            None => {
+                ip = "".to_string();
+                port = "".to_string();
+            }
+        };
+        result.push(PersistentPeerState {
+            id: peer_id,
+            ip: ip,
+            port: port,
+            being_connected: peer.being_connected,
+            connected: peer.stream.is_some(),
+            last_incoming_message: peer.last_incoming_message.elapsed().unwrap(),
+            last_reconnect_attempt: peer.last_reconnect_attempt.elapsed().unwrap(),
+            reconnect_attempts: peer.reconnect_attempts,
+            outgoing: peer.peer_info.is_some(),
+            they_interested: peer.they_interested,
+            we_choked: peer.we_choked,
+        });
+    }
+    result
 }
 
 pub fn load(location: &String) -> HashMap<u32, PersistentDownloadState> {

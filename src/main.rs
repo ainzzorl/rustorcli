@@ -43,7 +43,14 @@ fn main() -> () {
             ),
         )
         .subcommand(SubCommand::with_name("stop").about("stops the app"))
-        .subcommand(SubCommand::with_name("list").about("lists downloads"))
+        .subcommand(
+            SubCommand::with_name("list").about("lists downloads").arg(
+                Arg::with_name("peers")
+                    .short("p")
+                    .long("peers")
+                    .help("show per-peer info"),
+            ),
+        )
         .subcommand(
             App::new("add")
                 .about("adds download")
@@ -86,7 +93,9 @@ fn main() -> () {
             stop(pid_opt);
         }
         ("list", _) => {
-            list();
+            let subcommand_mathes = matches.subcommand_matches("list").unwrap();
+            let show_per_peer = subcommand_mathes.is_present("peers");
+            list(show_per_peer);
         }
         ("add", _) => {
             let subcommand_mathes = matches.subcommand_matches("add").unwrap();
@@ -196,7 +205,7 @@ fn remove(id: &str) {
     torrent_entries::remove_torrent(id);
 }
 
-fn list() {
+fn list(show_per_peer: bool) {
     let separator =
         "################################################################################";
     let entries = torrent_entries::list_torrents();
@@ -256,8 +265,37 @@ fn list() {
             "Not choking us: {}/{}, interested in us: {}/{}",
             we_unchoked, connected_peers, they_interested, connected_peers
         );
+        if show_per_peer {
+            if let Some(state) = states.get(&entry.id) {
+                for peer in state.peers.iter() {
+                    let addr = format!("{}:{}", peer.ip, peer.port);
+                    println!("#{} - {:addr$} Outgoing: {}, connected: {}, being connected: {}, choking: {}, interested: {}, reconnection attempts: {:reconatt$}, last incoming message: {}s, last reconnection attempt: {}s",
+                        peer.id,
+                        addr,
+                        short_bool(peer.outgoing),
+                        short_bool(peer.connected),
+                        short_bool(peer.being_connected),
+                        short_bool(peer.we_choked),
+                        short_bool(peer.they_interested),
+                        peer.reconnect_attempts,
+                        peer.last_incoming_message.as_secs(),
+                        peer.last_reconnect_attempt.as_secs(),
+                        addr = 25,
+                        reconatt = 2,
+                    );
+                }
+            }
+        }
         if cnt == entries.len() - 1 {
             println!("{}", separator);
         }
+    }
+}
+
+fn short_bool(val: bool) -> &'static str {
+    if val {
+        "Y"
+    } else {
+        "N"
     }
 }
