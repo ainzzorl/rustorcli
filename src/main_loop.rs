@@ -8,6 +8,7 @@ use rand::{thread_rng, Rng};
 use std::{thread, time};
 
 use std::net::{TcpListener, TcpStream};
+use std::ops::Sub;
 
 extern crate crypto;
 
@@ -375,7 +376,10 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: b
     let loop_log_interval = std::time::Duration::from_secs(3);
 
     loop {
-        if last_loop_log.elapsed().unwrap() > loop_log_interval {
+        let tick_start = std::time::SystemTime::now();
+
+        let log_loop = last_loop_log.elapsed().unwrap() > loop_log_interval;
+        if log_loop {
             info!("Main loop iteration #{}", iteration);
             last_loop_log = std::time::SystemTime::now();
         } else {
@@ -421,7 +425,23 @@ fn main_loop(downloads: &mut HashMap<u32, Download>, my_id: &String, is_local: b
             &mut open_connections_request_sender,
         );
 
-        thread::sleep(config::TICK_INTERVAL);
+        let tick_elapsed = tick_start.elapsed().unwrap();
+        if tick_elapsed > config::TICK_INTERVAL {
+            warn!(
+                "Main loop took more than expected duration: {}ms > {}ms",
+                tick_elapsed.as_millis(),
+                config::TICK_INTERVAL.as_millis()
+            );
+        } else {
+            let to_sleep = config::TICK_INTERVAL.sub(tick_elapsed);
+            if log_loop {
+                info!("Main loop sleeping {}ms", to_sleep.as_millis());
+            } else {
+                trace!("Main loop sleeping #{}ms", to_sleep.as_millis());
+            }
+            thread::sleep(to_sleep);
+        }
+
         iteration += 1;
     }
 }
