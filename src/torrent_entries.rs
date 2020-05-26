@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::fs::File;
 use std::io::Read;
+use std::io::Write;
 use std::path::Path;
 use std::process;
 
@@ -48,14 +49,30 @@ pub fn add_torrent(torrent_path: &str, download_path: &str) {
     let mut entries: Vec<TorrentEntry> = list_torrents();
     let new_id = get_new_id(&entries);
 
+    let next_id_path = format!("{}/next-id", util::config_directory());
+
+    let next_id_str = match std::fs::read_to_string(&next_id_path) {
+        Ok(content) => content,
+        Err(_) => "1".to_string(),
+    };
+    let mut next_id = next_id_str.parse::<u32>().unwrap();
+    if next_id < new_id {
+        next_id = new_id;
+    }
+
     let new_entry = TorrentEntry::new(
-        new_id,
+        next_id,
         get_absolute(torrent_path),
         get_absolute(download_path),
     );
     entries.push(new_entry);
 
     save(entries);
+
+    File::create(&next_id_path)
+        .unwrap()
+        .write_all((next_id + 1).to_string().as_bytes())
+        .unwrap();
 }
 
 pub fn remove_torrent(id: &str) {

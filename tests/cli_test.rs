@@ -9,8 +9,6 @@ mod cli_tests {
 
     static TEMP_DIRECTORY: &str = "./target/tmp/";
 
-    // TODO: should tests write configs to some other dirs somehow? Then we'd be able to run them in parallel.
-
     #[test]
     fn adding_removing_happy_path() -> Result<(), Box<dyn std::error::Error>> {
         pre_test();
@@ -172,7 +170,59 @@ mod cli_tests {
         Ok(())
     }
 
+    #[test]
+    fn id_assignment() -> Result<(), Box<dyn std::error::Error>> {
+        pre_test();
+
+        let mut cmd = Command::main_binary()?;
+
+        cmd.arg("list");
+        cmd.assert().success().stdout(predicate::str::is_empty());
+
+        cmd = Command::main_binary()?;
+        cmd.arg("add")
+            .arg("-t")
+            .arg("./tests/data/torrent_a_data.torrent")
+            .arg("-d")
+            .arg(format!("{}/destination-a", TEMP_DIRECTORY));
+        cmd.assert().success();
+
+        cmd = Command::main_binary()?;
+        cmd.arg("list");
+        cmd.assert()
+            .success()
+            .stdout(predicate::str::contains("Id: 1"));
+
+        cmd = Command::main_binary()?;
+        cmd.arg("remove").arg("-i").arg("1");
+        cmd.assert().success();
+
+        cmd = Command::main_binary()?;
+        cmd.arg("add")
+            .arg("-t")
+            .arg("tests/data/torrent_b_data.torrent")
+            .arg("-d")
+            .arg(format!("{}/destination-b", TEMP_DIRECTORY));
+        cmd.assert().success();
+
+        cmd = Command::main_binary()?;
+        cmd.arg("list");
+        cmd.assert()
+            .success()
+            .stdout(predicate::str::contains("Id: 2"))
+            .stdout(predicate::str::contains("Id: 1").not());
+
+        Ok(())
+    }
+
     fn pre_test() {
+        // To trigger creating config directory if it doesn't exist.
+        Command::main_binary()
+            .unwrap()
+            .arg("list")
+            .output()
+            .unwrap();
+
         let config_directory = util::config_directory();
         std::fs::remove_dir_all(config_directory).unwrap();
         std::fs::create_dir_all(format!("{}/destination-a", TEMP_DIRECTORY)).ok();
