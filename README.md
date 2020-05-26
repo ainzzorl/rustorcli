@@ -25,10 +25,10 @@ SUBCOMMANDS:
 
 ## Installation
 
-`make install`
+`make && make install`
 
 ## Testing
 
 * `make install-test-dependencies` - install a tracker and two other BitTorrent clients used for end-to-end testing.
 * `make generate-test-data`
-* `make test-all`
+* `make test`
