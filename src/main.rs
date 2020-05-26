@@ -28,8 +28,6 @@ use daemonize::Daemonize;
 fn main() -> () {
     torrent_entries::init_entries();
 
-    let pid_opt = read_pid();
-
     let matches = App::new("rustorcli")
         .version("0.1")
         .author("ainzzorl <ainzzorl@gmail.com>")
@@ -87,10 +85,10 @@ fn main() -> () {
         ("start", _) => {
             let subcommand_mathes = matches.subcommand_matches("start").unwrap();
             let is_local = subcommand_mathes.is_present("local");
-            start(pid_opt, is_local);
+            start(is_local);
         }
         ("stop", _) => {
-            stop(pid_opt);
+            stop();
         }
         ("list", _) => {
             let subcommand_mathes = matches.subcommand_matches("list").unwrap();
@@ -114,25 +112,12 @@ fn main() -> () {
     }
 }
 
-fn start(pid_opt: Option<i32>, is_local: bool) {
-    match pid_opt {
-        Some(pid) => {
-            let sys = sysinfo::System::new_all();
-            let process = sys.get_process(pid);
-            match process {
-                Some(_) => {
-                    println!("Process is already running!");
-                    process::exit(1);
-                }
-                None => {
-                    // Process not found
-                }
-            }
-        }
-        None => {
-            // Pid not present
-        }
+fn start(is_local: bool) {
+    if get_pid_if_running().is_some() {
+        println!("Process is already running!");
+        process::exit(1);
     }
+
     let stdout = File::create("/tmp/rustorcli.out").unwrap();
     let stderr = File::create("/tmp/rustorcli.err").unwrap();
 
@@ -162,27 +147,31 @@ fn run(is_local: bool) {
     main_loop::start(is_local);
 }
 
-fn stop(pid_opt: Option<i32>) {
-    match pid_opt {
+fn stop() {
+    match get_pid_if_running() {
         Some(pid) => {
-            let sys = sysinfo::System::new_all();
-            let process = sys.get_process(pid);
-            match process {
-                Some(_) => {
-                    println!("Process is running - stopping...");
-                    let pd = nix::unistd::Pid::from_raw(pid);
-                    nix::sys::signal::kill(pd, Signal::SIGINT).unwrap();
-                    println!("Successfully stopped!");
-                }
-                None => {
-                    println!("Process is not running");
-                }
-            }
+            println!("Process is running - stopping...");
+            let pd = nix::unistd::Pid::from_raw(pid);
+            nix::sys::signal::kill(pd, Signal::SIGINT).unwrap();
+            println!("Successfully stopped!");
         }
         None => {
-            // No pid - do nothing
+            println!("Process is not running");
         }
     }
+}
+
+fn get_pid_if_running() -> Option<i32> {
+    if let Some(pid) = read_pid() {
+        let sys = sysinfo::System::new_all();
+        match sys.get_process(pid) {
+            Some(_) => {
+                return Some(pid);
+            }
+            None => return None,
+        }
+    }
+    None
 }
 
 fn read_pid() -> Option<i32> {
@@ -210,6 +199,7 @@ fn list(show_per_peer: bool) {
         "################################################################################";
     let entries = torrent_entries::list_torrents();
     let states = state_persistence::load(&format!("{}/{}", util::config_directory(), "state.json"));
+    let running = get_pid_if_running().is_some();
     for (cnt, entry) in entries.iter().enumerate() {
         let mut done = String::from("?");
         let mut downloaded = String::from("?");
@@ -257,32 +247,34 @@ fn list(show_per_peer: bool) {
             "Have {}% of all pieces ({}/{})",
             pieces_ratio, downloaded_pieces, total_pieces
         );
-        println!(
-            "Connected to {} peer(s) of total {} ({} incoming + {} outgoing)",
-            connected_peers, total_peers, incoming_peers, outgoing_peers
-        );
-        println!(
-            "Not choking us: {}/{}, interested in us: {}/{}",
-            we_unchoked, connected_peers, they_interested, connected_peers
-        );
-        if show_per_peer {
-            if let Some(state) = states.get(&entry.id) {
-                for peer in state.peers.iter() {
-                    let addr = format!("{}:{}", peer.ip, peer.port);
-                    println!("#{} - {:addr$} Outgoing: {}, connected: {}, being connected: {}, choking: {}, interested: {}, reconnection attempts: {:reconatt$}, last incoming message: {}s, last reconnection attempt: {}s",
-                        peer.id,
-                        addr,
-                        short_bool(peer.outgoing),
-                        short_bool(peer.connected),
-                        short_bool(peer.being_connected),
-                        short_bool(peer.we_choked),
-                        short_bool(peer.they_interested),
-                        peer.reconnect_attempts,
-                        peer.last_incoming_message.as_secs(),
-                        peer.last_reconnect_attempt.as_secs(),
-                        addr = 25,
-                        reconatt = 2,
-                    );
+        if running {
+            println!(
+                "Connected to {} peer(s) of total {} ({} incoming + {} outgoing)",
+                connected_peers, total_peers, incoming_peers, outgoing_peers
+            );
+            println!(
+                "Not choking us: {}/{}, interested in us: {}/{}",
+                we_unchoked, connected_peers, they_interested, connected_peers
+            );
+            if show_per_peer {
+                if let Some(state) = states.get(&entry.id) {
+                    for peer in state.peers.iter() {
+                        let addr = format!("{}:{}", peer.ip, peer.port);
+                        println!("#{} - {:addr$} Outgoing: {}, connected: {}, being connected: {}, choking: {}, interested: {}, reconnection attempts: {:reconatt$}, last incoming message: {}s, last reconnection attempt: {}s",
+                            peer.id,
+                            addr,
+                            short_bool(peer.outgoing),
+                            short_bool(peer.connected),
+                            short_bool(peer.being_connected),
+                            short_bool(peer.we_choked),
+                            short_bool(peer.they_interested),
+                            peer.reconnect_attempts,
+                            peer.last_incoming_message.as_secs(),
+                            peer.last_reconnect_attempt.as_secs(),
+                            addr = 25,
+                            reconatt = 2,
+                        );
+                    }
                 }
             }
         }
