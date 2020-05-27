@@ -267,7 +267,7 @@ fn list(show_per_peer: bool) {
                 if let Some(state) = states.get(&entry.id) {
                     for peer in state.peers.iter() {
                         let addr = format!("{}:{}", peer.ip, peer.port);
-                        println!("#{} - {:addr$} Outgoing: {}, connected: {}, being connected: {}, choking: {}, interested: {}, reconnection attempts: {:reconatt$}, last incoming message: {}s, last reconnection attempt: {}s",
+                        println!("#{:id$} - {:addr$} Outgoing: {}, connected: {}, being connected: {}, choking: {}, interested: {}, reconnection attempts: {:reconatt$}, last incoming message: {}s, last reconnection attempt: {}s",
                             peer.id,
                             addr,
                             short_bool(peer.outgoing),
@@ -278,6 +278,7 @@ fn list(show_per_peer: bool) {
                             peer.reconnect_attempts,
                             peer.last_incoming_message.as_secs(),
                             peer.last_reconnect_attempt.as_secs(),
+                            id = 2,
                             addr = 25,
                             reconatt = 2,
                         );
