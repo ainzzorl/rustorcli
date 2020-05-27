@@ -1,6 +1,8 @@
 use std::io::{self, Read};
 use std::net::TcpStream;
 
+use crate::config;
+
 const BYTE_0: u32 = 256 * 256 * 256;
 const BYTE_1: u32 = 256 * 256;
 const BYTE_2: u32 = 256;
@@ -47,6 +49,11 @@ fn read_n_to_buf(
 
     if blocking {
         stream.set_nonblocking(false).unwrap();
+        if stream.read_timeout().unwrap().is_none() {
+            stream
+                .set_read_timeout(Some(config::BLOCKING_CONNECTION_READ_TIMEOUT))
+                .unwrap();
+        }
         let bytes_read = stream.take(bytes_to_read as u64).read_to_end(buf);
         match bytes_read {
             Ok(0) => return Err(std::io::Error::new(io::ErrorKind::Other, "Read 0 bytes!")),
@@ -56,6 +63,9 @@ fn read_n_to_buf(
         }
     } else {
         stream.set_nonblocking(true).unwrap();
+        if stream.read_timeout().unwrap().is_some() {
+            stream.set_read_timeout(None).unwrap();
+        }
         let bytes_read = stream.take(bytes_to_read as u64).read_to_end(buf);
         match bytes_read {
             Ok(0) => return Err(std::io::Error::new(io::ErrorKind::Other, "Read 0 bytes!")),
