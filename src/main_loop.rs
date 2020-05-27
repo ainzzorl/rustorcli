@@ -7,6 +7,7 @@ use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 use std::{thread, time};
 
+use std::collections::VecDeque;
 use std::net::{TcpListener, TcpStream};
 use std::ops::Sub;
 
@@ -48,6 +49,7 @@ fn reload_config(
                     download.set_stats(Stats {
                         downloaded: state.downloaded,
                         uploaded: state.uploaded,
+                        recent_downloaded: VecDeque::new(),
                     });
                 }
                 None => {}

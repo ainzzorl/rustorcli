@@ -349,7 +349,9 @@ fn on_piece(message: Vec<u8>, download: &mut Download, peer_id: usize) {
     }
 
     download.set_block_downloaded(pieceindex as usize, block_id);
-    download.stats_mut().add_downloaded(blocklen as u64);
+    download
+        .stats_mut()
+        .add_downloaded(blocklen as u64, peer_id);
 }
 
 fn send_msg(

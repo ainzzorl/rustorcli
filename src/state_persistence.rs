@@ -23,6 +23,7 @@ pub struct PersistentDownloadState {
     pub name: String,
     pub they_interested: u32,
     pub we_unchoked: u32,
+    pub download_speed: u64,
 
     pub peers: Vec<PersistentPeerState>,
 }
@@ -91,6 +92,7 @@ pub fn persist(downloads: &mut HashMap<u32, Download>, location: &String) {
                 we_unchoked: we_unchoked,
                 name: download.name.clone(),
                 peers: get_persistent_peers(&download),
+                download_speed: download.stats_mut().get_download_speed(),
             },
         );
     }

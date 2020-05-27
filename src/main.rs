@@ -215,6 +215,7 @@ fn list(show_per_peer: bool) {
         let mut we_unchoked = String::from("?");
         let mut they_interested = String::from("?");
         let mut name = String::from("?");
+        let mut download_speed = String::from("?");
         match states.get(&entry.id) {
             Some(state) => {
                 downloaded = state.downloaded.to_string();
@@ -232,6 +233,9 @@ fn list(show_per_peer: bool) {
                 downloaded_pieces = state.downloaded_pieces.to_string();
                 let ratio = state.downloaded_pieces as f64 / state.total_pieces as f64;
                 pieces_ratio = format!("{:.4}", ratio * 100f64);
+                if running {
+                    download_speed = state.download_speed.to_string();
+                }
             }
             None => {}
         }
@@ -241,7 +245,10 @@ fn list(show_per_peer: bool) {
         println!("Destination: {}/{}", entry.download_path, name);
         println!("Done: {}", done);
         println!("Size: {} bytes", size);
-        println!("Downloaded: {} bytes", downloaded);
+        println!(
+            "Downloaded: {} bytes, speed: {}/sec",
+            downloaded, download_speed
+        );
         println!("Uploaded: {} bytes", uploaded);
         println!(
             "Have {}% of all pieces ({}/{})",

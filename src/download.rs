@@ -11,6 +11,7 @@ use std::fs;
 use std::fs::File;
 use std::net::TcpStream;
 use std::path::Path;
+use std::time::SystemTime;
 
 use std::cmp::min;
 use std::collections::VecDeque;
@@ -191,6 +192,13 @@ impl Peer {
 pub struct Stats {
     pub downloaded: u64,
     pub uploaded: u64,
+    pub recent_downloaded: VecDeque<RecentDowloadedEntry>,
+}
+
+pub struct RecentDowloadedEntry {
+    _peer_id: usize,
+    size: u64,
+    time: SystemTime,
 }
 
 impl Stats {
@@ -198,6 +206,7 @@ impl Stats {
         Stats {
             downloaded: 0,
             uploaded: 0,
+            recent_downloaded: VecDeque::new(),
         }
     }
 
@@ -209,14 +218,46 @@ impl Stats {
         self.uploaded
     }
 
-    pub fn add_downloaded(&mut self, delta: u64) {
+    pub fn add_downloaded(&mut self, delta: u64, peer_id: usize) {
         self.downloaded += delta;
+        self.recent_downloaded.push_back(RecentDowloadedEntry {
+            _peer_id: peer_id,
+            size: delta,
+            time: SystemTime::now(),
+        });
         debug!("Total downloaded: {}", self.downloaded);
     }
 
     pub fn add_uploaded(&mut self, delta: u64) {
         self.uploaded += delta;
         debug!("Total uploaded: {}", self.uploaded);
+    }
+
+    pub fn get_download_speed(&mut self) -> u64 {
+        let size_before = self.recent_downloaded.len();
+        while !self.recent_downloaded.is_empty()
+            && self
+                .recent_downloaded
+                .front()
+                .unwrap()
+                .time
+                .elapsed()
+                .unwrap()
+                > config::DOWNLOAD_SPEED_EVALUATION_INTERVAL
+        {
+            self.recent_downloaded.pop_front();
+        }
+        let size_after = self.recent_downloaded.len();
+        let mut total = 0;
+        for v in self.recent_downloaded.iter() {
+            total += v.size;
+        }
+        let speed = total / config::DOWNLOAD_SPEED_EVALUATION_INTERVAL.as_secs();
+        debug!(
+            "recent_downloaded size before drain: {}, after: {}, total: {}, speed: {}",
+            size_before, size_after, total, speed
+        );
+        speed
     }
 }
 
