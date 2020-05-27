@@ -636,6 +636,10 @@ impl Download {
         self.peers[peer_id].stream = None;
         self.peers[peer_id].buf = Vec::new();
         self.peers[peer_id].next_message_length = 0;
+        self.peers[peer_id].we_choked = true;
+        self.peers[peer_id].we_interested = false;
+        self.peers[peer_id].they_interested = false;
+        self.peers[peer_id].outstanding_block_requests = 0;
     }
 
     fn on_done(&self) {
