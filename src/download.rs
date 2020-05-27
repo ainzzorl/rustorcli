@@ -170,7 +170,7 @@ impl Peer {
             outstanding_block_requests: 0,
             has_piece: vec![false; num_pieces],
             last_reconnect_attempt: std::time::SystemTime::UNIX_EPOCH,
-            last_incoming_message: std::time::SystemTime::now(),
+            last_incoming_message: std::time::SystemTime::UNIX_EPOCH,
             reconnect_attempts: 0,
             being_connected: false,
         }
