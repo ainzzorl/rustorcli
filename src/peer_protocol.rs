@@ -322,9 +322,10 @@ fn to_incoming_block_request(peer_id: usize, message: Vec<u8>) -> IncomingBlockR
     let pieceindex = io_primitives::bytes_to_u32(&message[1..=4]);
     let begin = io_primitives::bytes_to_u32(&message[5..=8]) as u64;
     let length = io_primitives::bytes_to_u32(&message[9..=12]) as u64;
+    // TODO: log download id
     info!(
-        // TODO: log download id "Got request {} from peer_id={}; from {}, len={}", pieceindex,
-        peer_id, begin, length
+        "Got request {} from peer_id={}; from {}, len={}",
+        pieceindex, peer_id, begin, length
     );
 
     IncomingBlockRequest {
