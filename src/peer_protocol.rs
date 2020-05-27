@@ -75,11 +75,17 @@ pub fn process_message(message: Vec<u8>, download: &mut Download, peer_id: usize
             peer.we_choked = false;
         }
         TYPE_INTERESTED => {
-            info!("Interested! download_id={}, peer_id={}", download_id, peer_id);
+            info!(
+                "Interested! download_id={}, peer_id={}",
+                download_id, peer_id
+            );
             peer.they_interested = true;
         }
         TYPE_NOT_INTERESTED => {
-            info!("Not interested! download_id={}, peer_id={}", download_id, peer_id);
+            info!(
+                "Not interested! download_id={}, peer_id={}",
+                download_id, peer_id
+            );
             peer.they_interested = false;
         }
         TYPE_HAVE => {
@@ -99,7 +105,10 @@ pub fn process_message(message: Vec<u8>, download: &mut Download, peer_id: usize
             on_piece(message, download, peer_id);
         }
         _ => {
-            warn!("Unknown type! download_id={}, peer_id={}", download_id, peer_id);
+            warn!(
+                "Unknown type! download_id={}, peer_id={}",
+                download_id, peer_id
+            );
         }
     }
 }
@@ -235,7 +244,10 @@ pub fn receive_message(
     download_id: usize,
     peer_id: usize,
 ) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
-    debug!("Getting message size... download_id={}, peer_id={}", download_id, peer_id);
+    debug!(
+        "Getting message size... download_id={}, peer_id={}",
+        download_id, peer_id
+    );
     let stream: &mut TcpStream = peer.stream.as_mut().unwrap();
     if peer.next_message_length == 0 {
         match io_primitives::read_n(&stream, 4, false) {
@@ -311,9 +323,8 @@ fn to_incoming_block_request(peer_id: usize, message: Vec<u8>) -> IncomingBlockR
     let begin = io_primitives::bytes_to_u32(&message[5..=8]) as u64;
     let length = io_primitives::bytes_to_u32(&message[9..=12]) as u64;
     info!(
-        // TODO: log download id
-        "Got request {} from peer_id={}; from {}, len={}",
-        pieceindex, peer_id, begin, length
+        // TODO: log download id "Got request {} from peer_id={}; from {}, len={}", pieceindex,
+        peer_id, begin, length
     );
 
     IncomingBlockRequest {

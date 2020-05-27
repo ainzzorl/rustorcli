@@ -86,7 +86,10 @@ pub fn open_missing_connections(
 
         match TcpStream::connect_timeout(&socket_address, config::OUTGOING_CONNECTION_TIMEOUT) {
             Ok(mut stream) => {
-                info!("Connected to the peer!");
+                info!(
+                    "Connected to the peer! download_id={}, peer_id={}",
+                    request.download_id, request.peer_id
+                );
                 match handshake_outgoing(&mut stream, &request.info_hash, &request.my_id) {
                     Ok(()) => {
                         stream.set_nonblocking(true).unwrap();
@@ -98,7 +101,10 @@ pub fn open_missing_connections(
                         .unwrap();
                     }
                     Err(e) => {
-                        warn!("Handshake failure: {:?}", e);
+                        warn!(
+                            "Handshake failure: {:?}. download_id={}, peer_id={}",
+                            e, request.download_id, request.peer_id
+                        );
                         outx.send(Err(ConnectionError {
                             peer_id: request.peer_id,
                             download_id: request.download_id as u32,
