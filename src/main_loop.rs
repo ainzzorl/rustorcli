@@ -143,7 +143,7 @@ fn request_new_connections(
         let peer_info = peer.peer_info.as_ref().unwrap();
 
         info!(
-            "Requesting connection through the channel. peer_id={}, download_id={}",
+            "Requesting connection through the channel. download_id={}, peer_id={}",
             peer_id, download_id
         );
         peer.being_connected = true;
@@ -151,8 +151,8 @@ fn request_new_connections(
             ip: peer_info.ip.clone(),
             port: peer_info.port.clone(),
             my_id: my_id.clone(),
-            peer_id: peer_id,
             download_id: download_id as usize,
+            peer_id: peer_id,
             info_hash: info_hash.clone(),
         })
         .expect("Expected send to succeed");
@@ -173,15 +173,15 @@ fn request_resetting_broken_connections(
             peer.being_connected = true;
             let peer_info = peer.peer_info.as_ref().unwrap();
             info!(
-                "Requesting reconnection through the channel. peer_id={}, download_id={}, attempt={}",
+                "Requesting reconnection through the channel. download_id={}, peer_id={}, attempt={}",
                 peer_id, download_id, peer.reconnect_attempts
             );
             outx.send(OpenConnectionRequest {
                 ip: peer_info.ip.clone(),
                 port: peer_info.port.clone(),
                 my_id: my_id.clone(),
-                peer_id: peer_id,
                 download_id: *download_id as usize,
+                peer_id: peer_id,
                 info_hash: info_hash.clone(),
             })
             .expect("Expected send to succeed");

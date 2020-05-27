@@ -63,42 +63,43 @@ impl Message {
 pub fn process_message(message: Vec<u8>, download: &mut Download, peer_id: usize) {
     let resptype = message[0];
     info!("Response type: {}", resptype);
+    let download_id = download.id;
     let mut peer = download.peer_mut(peer_id);
     match resptype {
         TYPE_CHOKED => {
-            info!("Choked! peer_id={}", peer_id);
+            info!("Choked! download_id={}, peer_id={}", download_id, peer_id);
             peer.we_choked = true;
         }
         TYPE_UNCHOKED => {
-            info!("Unchoked! peer_id={}", peer_id);
+            info!("Unchoked! download_id={}, peer_id={}", download_id, peer_id);
             peer.we_choked = false;
         }
         TYPE_INTERESTED => {
-            info!("Interested! peer_id={}", peer_id);
+            info!("Interested! download_id={}, peer_id={}", download_id, peer_id);
             peer.they_interested = true;
         }
         TYPE_NOT_INTERESTED => {
-            info!("Not interested! peer_id={}", peer_id);
+            info!("Not interested! download_id={}, peer_id={}", download_id, peer_id);
             peer.they_interested = false;
         }
         TYPE_HAVE => {
-            info!("Have! peer_id={}", peer_id);
+            info!("Have! download_id={}, peer_id={}", download_id, peer_id);
             on_have(message, download, peer_id);
         }
         TYPE_BITFIELD => {
-            info!("Bitfield! peer_id={}", peer_id);
+            info!("Bitfield! download_id={}, peer_id={}", download_id, peer_id);
             on_bitfield(message, download, peer_id);
         }
         TYPE_REQUEST => {
-            info!("Request! peer_id={}", peer_id);
+            info!("Request! download_id={}, peer_id={}", download_id, peer_id);
             download.add_incoming_block_request(to_incoming_block_request(peer_id, message));
         }
         TYPE_PIECE => {
-            info!("Piece! download_id={}, peer_id={}", download.id, peer_id);
+            info!("Piece! download_id={}, peer_id={}", download_id, peer_id);
             on_piece(message, download, peer_id);
         }
         _ => {
-            info!("Unknown type! peer_id={}", peer_id);
+            warn!("Unknown type! download_id={}, peer_id={}", download_id, peer_id);
         }
     }
 }
@@ -144,8 +145,8 @@ pub fn request_block(
 
 pub fn send_bitfield(peer_id: usize, download: &mut Download) -> Result<(), std::io::Error> {
     info!(
-        "Sending bitfield to peer_id={}, download_id={}",
-        peer_id, download.id
+        "Sending bitfield to download_id={}, peer_id={}",
+        download.id, peer_id
     );
 
     let num_pieces = download.pieces().len();
@@ -200,8 +201,8 @@ fn on_have(message: Vec<u8>, download: &mut Download, peer_id: usize) {
 
 pub fn send_unchoke(peer_id: usize, download: &mut Download) -> Result<(), std::io::Error> {
     info!(
-        "Sending unchoked to peer_id={}, download_id={}",
-        peer_id, download.id
+        "Sending unchoked to download_id={}, peer_id={}",
+        download.id, peer_id
     );
 
     send_msg(download, peer_id, Message::Unchoke)
@@ -234,7 +235,7 @@ pub fn receive_message(
     download_id: usize,
     peer_id: usize,
 ) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
-    debug!("Getting message size... peer_id={}", peer_id);
+    debug!("Getting message size... download_id={}, peer_id={}", download_id, peer_id);
     let stream: &mut TcpStream = peer.stream.as_mut().unwrap();
     if peer.next_message_length == 0 {
         match io_primitives::read_n(&stream, 4, false) {
@@ -249,14 +250,14 @@ pub fn receive_message(
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 debug!(
-                    "Would-block error from peer_id={} - returning empty",
-                    peer_id
+                    "Would-block error from download_id={}, peer_id={} - returning empty",
+                    download_id, peer_id
                 );
                 return Ok(None);
             }
             Err(e) => {
                 warn!(
-                    "Unexpected error, dowload_id={}, peer_id={}: {:?}",
+                    "Unexpected error, download_id={}, peer_id={}: {:?}",
                     download_id, peer_id, e
                 );
                 return Err(std::boxed::Box::new(e));
@@ -290,14 +291,14 @@ pub fn receive_message(
         }
         Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
             debug!(
-                "Would-block error from peer_id={} - returning empty",
-                peer_id
+                "Would-block error from download_id={}, peer_id={} - returning empty",
+                download_id, peer_id
             );
             return Ok(None);
         }
         Err(e) => {
             warn!(
-                "Unexpected error, dowload_id={}, peer_id={}: {:?}",
+                "Unexpected error, download_id={}, peer_id={}: {:?}",
                 download_id, peer_id, e
             );
             return Err(std::boxed::Box::new(e));
@@ -310,6 +311,7 @@ fn to_incoming_block_request(peer_id: usize, message: Vec<u8>) -> IncomingBlockR
     let begin = io_primitives::bytes_to_u32(&message[5..=8]) as u64;
     let length = io_primitives::bytes_to_u32(&message[9..=12]) as u64;
     info!(
+        // TODO: log download id
         "Got request {} from peer_id={}; from {}, len={}",
         pieceindex, peer_id, begin, length
     );
@@ -329,9 +331,10 @@ fn on_piece(message: Vec<u8>, download: &mut Download, peer_id: usize) {
     let begin = io_primitives::bytes_to_u32(&message[5..=8]) as usize;
     let blocklen = (message.len() - 9) as usize;
     let block_id = begin / config::BLOCK_SIZE as usize;
+    let download_id = download.id;
     info!(
-        "Got piece {} from peer_id={}; from {}, len={}, writing to {}",
-        pieceindex, peer_id, begin, blocklen, path
+        "Got piece {} from download_id={}, peer_id={}; from {}, len={}, writing to {}",
+        pieceindex, download_id, peer_id, begin, blocklen, path
     );
 
     let seek_pos: u64 =
@@ -371,13 +374,13 @@ fn send_msg(
         Ok(()) => Ok(()),
         Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
             debug!(
-                "Would-block error sending message to peer_id={}, download_id={}",
-                peer_id, download.id
+                "Would-block error sending message to download_id={}, peer_id={}",
+                download.id, peer_id
             );
             Ok(())
         }
         Err(e) => {
-            warn!("Error sending message to peer_id={}, download_id={}: {:?}. Resetting the connection", peer_id, download.id, e);
+            warn!("Error sending message to download_id={}, peer_id={}: {:?}. Resetting the connection", download.id, peer_id, e);
             download.on_broken_connection(peer_id);
             Err(e)
         }

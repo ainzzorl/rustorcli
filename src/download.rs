@@ -137,6 +137,7 @@ struct FileSerializable {
 }
 
 pub struct Peer {
+    pub id: usize,
     pub stream: Option<TcpStream>,
     pub buf: Vec<u8>,
     pub next_message_length: u32,
@@ -158,8 +159,14 @@ pub struct Peer {
 }
 
 impl Peer {
-    pub fn new(stream: Option<TcpStream>, peer_info: Option<PeerInfo>, num_pieces: usize) -> Peer {
+    pub fn new(
+        id: usize,
+        stream: Option<TcpStream>,
+        peer_info: Option<PeerInfo>,
+        num_pieces: usize,
+    ) -> Peer {
         Peer {
+            id: id,
             stream: stream,
             buf: Vec::new(),
             next_message_length: 0,
@@ -385,17 +392,19 @@ impl Download {
                 }
             }
         }
+        let peer_id = self.peers.len();
         info!(
-            "Registered new peer. download_id={}, ip={}, port={}",
-            self.id, peer_info.ip, peer_info.port
+            "Registered new peer. download_id={}, peer_id={}, ip={}, port={}",
+            self.id, peer_id, peer_info.ip, peer_info.port
         );
         self.peers
-            .push(Peer::new(None, Some(peer_info), self.pieces.len()));
+            .push(Peer::new(peer_id, None, Some(peer_info), self.pieces.len()));
     }
 
     pub fn register_incoming_peer(&mut self, stream: TcpStream) -> usize {
+        let peer_id = self.peers.len();
         self.peers
-            .push(Peer::new(Some(stream), None, self.pieces.len()));
+            .push(Peer::new(peer_id, Some(stream), None, self.pieces.len()));
         return self.peers.len() - 1;
     }
 
